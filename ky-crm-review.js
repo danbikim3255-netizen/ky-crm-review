@@ -1,4 +1,4 @@
-// KY CRM Case Review Bookmarklet v4.0.0
+// KY CRM Case Review Bookmarklet v4.1.0
 // Chrome Extension(v3.1) → Bookmarklet 전환
 // Main World에서 실행: Xrm.Page 직접 접근, 페이지 인증 토큰 공유, SW 의존성 제거
 (function () {
@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.0.0";
+  const VERSION = "4.1.0";
 
   const MAX_PDF_TEXT_CHARS = 200000;
   const MAX_TOTAL_LINKED_CHARS = 400000;
@@ -86,6 +86,23 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     const ts = new Date().toISOString().substring(11, 19);
     _debugLog.push(`[${ts}] ${msg}`);
     console.log(`[KY-BM] ${msg}`);
+  }
+
+  function findMsalToken(resource) {
+    try {
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const key = sessionStorage.key(i);
+        const val = sessionStorage.getItem(key);
+        if (!val || val.length < 50 || val[0] !== "{") continue;
+        try {
+          const parsed = JSON.parse(val);
+          if (parsed.credentialType === "AccessToken" && parsed.secret && parsed.target && parsed.target.toLowerCase().includes(resource)) {
+            if (parsed.expiresOn && parseInt(parsed.expiresOn) > Math.floor(Date.now() / 1000)) return parsed.secret;
+          }
+        } catch { continue; }
+      }
+    } catch { /* ignore */ }
+    return null;
   }
 
   // ─── 4. 유틸리티 ──────────────────────────────────────────────────
@@ -507,54 +524,98 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     return data.value || [];
   }
 
-  async function trySharesApi(apiOrigin, encoded, depth = 0) {
+  async function trySharesApi(apiOrigin, encoded, depth = 0, fetchOpts = null) {
     if (depth > 3) return [];
-    const baseApi = `${apiOrigin}/_api/v2.0/shares/${encoded}/driveItem`;
-    const childrenResp = await fetch(`${baseApi}/children`, { credentials: "include", headers: { "Accept": "application/json" } });
-    if (childrenResp.ok) {
-      const data = await childrenResp.json();
-      const items = data.value || [];
-      if (items.length > 0) {
-        const files = [];
-        for (const item of items) {
-          if (item.folder && item.parentReference?.driveId) {
-            try {
-              const subItems = await fetchGraphChildren(apiOrigin, item.parentReference.driveId, item.id);
-              for (const sub of subItems) {
-                if (sub.folder && sub.parentReference?.driveId && depth < 3) {
-                  const deepItems = await fetchGraphChildren(apiOrigin, sub.parentReference.driveId, sub.id);
-                  for (const deep of deepItems) {
-                    if (!deep.folder) files.push({ name: `${item.name}/${sub.name}/${deep.name}`, size: deep.size, url: deep["@content.downloadUrl"] || null });
+    const isGraph = apiOrigin.includes("graph.microsoft.com");
+    const basePath = isGraph ? `${apiOrigin}/v1.0/shares/${encoded}/driveItem` : `${apiOrigin}/_api/v2.0/shares/${encoded}/driveItem`;
+    const dlUrlKey = isGraph ? "@microsoft.graph.downloadUrl" : "@content.downloadUrl";
+    const opts = fetchOpts || { credentials: "include", headers: { "Accept": "application/json" } };
+    _dbg(`[SP] trySharesApi: ${basePath.substring(0, 80)}... (creds=${opts.credentials})`);
+    try {
+      const childrenResp = await fetch(`${basePath}/children`, opts);
+      _dbg(`[SP] children 응답: ${childrenResp.status}`);
+      if (childrenResp.ok) {
+        const data = await childrenResp.json();
+        const items = data.value || [];
+        if (items.length > 0) {
+          const files = [];
+          for (const item of items) {
+            if (item.folder && item.parentReference?.driveId) {
+              try {
+                const subItems = await fetchGraphChildren(apiOrigin, item.parentReference.driveId, item.id);
+                for (const sub of subItems) {
+                  if (sub.folder && sub.parentReference?.driveId && depth < 3) {
+                    const deepItems = await fetchGraphChildren(apiOrigin, sub.parentReference.driveId, sub.id);
+                    for (const deep of deepItems) {
+                      if (!deep.folder) files.push({ name: `${item.name}/${sub.name}/${deep.name}`, size: deep.size, url: deep[dlUrlKey] || deep["@content.downloadUrl"] || null });
+                    }
+                  } else if (!sub.folder) {
+                    files.push({ name: `${item.name}/${sub.name}`, size: sub.size, url: sub[dlUrlKey] || sub["@content.downloadUrl"] || null });
                   }
-                } else if (!sub.folder) {
-                  files.push({ name: `${item.name}/${sub.name}`, size: sub.size, url: sub["@content.downloadUrl"] || null });
                 }
-              }
-            } catch (err) { _dbg(`[SP] 하위 폴더 오류: ${item.name} — ${err.message}`); }
-          } else {
-            files.push({ name: item.name, size: item.size, url: item["@content.downloadUrl"] || null });
+              } catch (err) { _dbg(`[SP] 하위 폴더 오류: ${item.name} — ${err.message}`); }
+            } else {
+              files.push({ name: item.name, size: item.size, url: item[dlUrlKey] || item["@content.downloadUrl"] || null });
+            }
           }
+          _dbg(`[SP] 폴더 파일 ${files.length}개 발견`);
+          return files;
         }
-        return files;
       }
-    }
-    const itemResp = await fetch(baseApi, { credentials: "include", headers: { "Accept": "application/json" } });
-    if (!itemResp.ok) return null;
-    const item = await itemResp.json();
-    if (item.file && item.name) return [{ name: item.name, size: item.size, url: item["@content.downloadUrl"] || null }];
-    return null;
+    } catch (err) { _dbg(`[SP] children 요청 실패: ${err.message}`); }
+    try {
+      const itemResp = await fetch(basePath, opts);
+      _dbg(`[SP] driveItem 응답: ${itemResp.status}`);
+      if (!itemResp.ok) return null;
+      const item = await itemResp.json();
+      if (item.file && item.name) {
+        _dbg(`[SP] 단일 파일 발견: ${item.name} (${item.size} bytes)`);
+        return [{ name: item.name, size: item.size, url: item[dlUrlKey] || item["@content.downloadUrl"] || null }];
+      }
+      if (item.name && !item.file) { _dbg(`[SP] driveItem은 폴더 — children 재시도`); }
+      return null;
+    } catch (err) { _dbg(`[SP] driveItem 요청 실패: ${err.message}`); return null; }
   }
 
   async function fetchSharePointViaSharesApi(sharingUrl) {
     try {
       const encoded = "u!" + btoa(sharingUrl).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
       const sharingOrigin = new URL(sharingUrl).origin;
+      _dbg(`[SP] Shares API 시도: ${sharingUrl.substring(0, 80)}...`);
+      _dbg(`[SP] encoded: ${encoded.substring(0, 40)}...`);
+
       const origins = [sharingOrigin, ...SP_API_ORIGINS.filter((o) => o !== sharingOrigin)];
       for (const origin of origins) {
-        try { const result = await trySharesApi(origin, encoded); if (result) return result; } catch { /* next */ }
+        try {
+          _dbg(`[SP] SharePoint origin 시도: ${origin}`);
+          const result = await trySharesApi(origin, encoded);
+          if (result) return result;
+        } catch (err) { _dbg(`[SP] origin ${origin} 예외: ${err.message}`); }
       }
+
+      const graphToken = findMsalToken("graph.microsoft.com");
+      if (graphToken) {
+        _dbg("[SP] MSAL Graph 토큰 발견 — Graph API 시도");
+        try {
+          const result = await trySharesApi("https://graph.microsoft.com", encoded, 0, { headers: { "Accept": "application/json", "Authorization": `Bearer ${graphToken}` } });
+          if (result) return result;
+        } catch (err) { _dbg(`[SP] Graph API 예외: ${err.message}`); }
+      } else { _dbg("[SP] MSAL Graph 토큰 미발견"); }
+
+      const spToken = findMsalToken("sharepoint.com");
+      if (spToken) {
+        _dbg("[SP] MSAL SharePoint 토큰 발견 — Bearer 인증 재시도");
+        for (const origin of origins) {
+          try {
+            const result = await trySharesApi(origin, encoded, 0, { headers: { "Accept": "application/json", "Authorization": `Bearer ${spToken}` } });
+            if (result) return result;
+          } catch (err) { _dbg(`[SP] Bearer origin ${origin} 예외: ${err.message}`); }
+        }
+      }
+
+      _dbg("[SP] 모든 Shares API 시도 실패");
       return null;
-    } catch { return null; }
+    } catch (err) { _dbg(`[SP] fetchSharePointViaSharesApi 예외: ${err.message}`); return null; }
   }
 
   async function processSharePointFileList(link, fileList) {
@@ -572,20 +633,23 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       } catch { /* skip */ }
     }
 
-    const zipFiles = fileList.filter((f) => f.name && /\.zip$/i.test(f.name) && f.url);
+    const zipFiles = fileList.filter((f) => f.name && /\.zip$/i.test(f.name) && (f.url || f._buffer));
     const zipImages = [];
     for (const zf of zipFiles) {
       try {
         let zipResult = null;
-        const fileSize = zf.size ? Number(zf.size) : 0;
+        const fileSize = zf.size ? Number(zf.size) : (zf._buffer ? zf._buffer.byteLength : 0);
         const MAX_SP_FULL_DOWNLOAD = 200 * 1024 * 1024;
-        if (fileSize > 0 && fileSize < MAX_SP_FULL_DOWNLOAD) {
+        if (zf._buffer) {
+          _dbg(`[SP ZIP] ${zf.name}: 직접 다운로드 버퍼 사용 (${Math.round(zf._buffer.byteLength / 1024)}KB)`);
+          zipResult = await extractTextFromZipBuffer(zf._buffer);
+        } else if (fileSize > 0 && fileSize < MAX_SP_FULL_DOWNLOAD && zf.url) {
           try {
             const zipResp = await fetch(zf.url, { credentials: "include" });
             if (zipResp.ok) zipResult = await extractTextFromZipBuffer(await zipResp.arrayBuffer());
           } catch (e) { _dbg(`[SP ZIP] ${zf.name}: 전체 다운로드 실패 — ${e.message}`); }
         }
-        if (!zipResult) zipResult = await extractTextFilesFromZip(zf.url, fileSize);
+        if (!zipResult && zf.url) zipResult = await extractTextFilesFromZip(zf.url, fileSize);
         if (!zipResult) continue;
         for (const tr of zipResult.textResults) textContents += `\n\n--- ZIP 내부 텍스트: ${zf.name} > ${tr.name} ---\n${tr.text}\n--- 끝 ---`;
         const allE = zipResult.allEntries;
@@ -633,21 +697,42 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
 
   async function fetchSharePointFolder(link) {
     try {
+      _dbg(`[SP] fetchSharePointFolder: ${link.url.substring(0, 80)}...`);
       const sharesFileList = await fetchSharePointViaSharesApi(link.url);
-      if (sharesFileList && sharesFileList.length > 0) return await processSharePointFileList(link, sharesFileList);
+      if (sharesFileList && sharesFileList.length > 0) {
+        _dbg(`[SP] Shares API 성공: ${sharesFileList.length}개 파일`);
+        return await processSharePointFileList(link, sharesFileList);
+      }
+      _dbg("[SP] Shares API 실패 — 직접 fetch fallback 시도");
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
       const response = await fetch(link.url, { credentials: "include", signal: controller.signal });
       clearTimeout(timeoutId);
-      if (!response.ok) return { ...link, content: null, error: `HTTP ${response.status}` };
+      if (!response.ok) {
+        _dbg(`[SP] 직접 fetch 실패: HTTP ${response.status}`);
+        return { ...link, content: null, error: `HTTP ${response.status}` };
+      }
       const finalUrl = response.url;
+      _dbg(`[SP] 직접 fetch 리다이렉트: ${finalUrl.substring(0, 80)}...`);
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/zip") || contentType.includes("application/octet-stream") || contentType.includes("application/x-zip")) {
+        _dbg("[SP] 직접 다운로드 응답 감지 — ZIP/바이너리 처리");
+        const buf = await response.arrayBuffer();
+        const fileName = link.text || link.url.split("/").pop()?.split("?")[0] || "download";
+        if (/\.zip$/i.test(fileName) || buf.byteLength > 100 && new Uint8Array(buf.slice(0, 2)).toString() === "80,75") {
+          return await processSharePointFileList(link, [{ name: fileName, size: buf.byteLength, url: null, _buffer: buf }]);
+        }
+        return { ...link, content: `SharePoint 파일: "${fileName}" (${Math.round(buf.byteLength / 1024)}KB) — 바이너리 파일, 텍스트 추출 불가`, error: null };
+      }
       let fileList = null;
       if (finalUrl.includes("/_layouts/15/onedrive.aspx") || finalUrl.includes("/AllItems.aspx")) { fileList = await fetchSharePointFilesViaApi(finalUrl); }
       else { fileList = parseSharePointFolderHtml(await response.text(), link.url); }
       if (fileList && fileList.length > 0) return await processSharePointFileList(link, fileList);
-      return { ...link, content: `SharePoint 폴더 링크: "${link.text}" - 파일 목록 추출 불가, 수동 확인 필요\nURL: ${link.url}`, error: null };
+      _dbg("[SP] 파일 목록 추출 불가");
+      return { ...link, content: `SharePoint 링크: "${link.text}" - CORS 또는 권한 문제로 자동 분석 불가. 수동 확인 필요\nURL: ${link.url}`, error: null };
     } catch (err) {
-      return { ...link, content: null, error: err.name === "AbortError" ? "Timeout" : err.message };
+      _dbg(`[SP] fetchSharePointFolder 예외: ${err.name} — ${err.message}`);
+      return { ...link, content: `SharePoint 링크: "${link.text}" - 자동 분석 실패 (${err.name === "AbortError" ? "Timeout" : "CORS/네트워크 오류"}). 수동 확인 필요\nURL: ${link.url}`, error: null };
     }
   }
 
@@ -991,7 +1076,8 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     const urlRegex = /https?:\/\/[^\s<>"')\]]+/g; let urlMatch;
     while ((urlMatch = urlRegex.exec(allText)) !== null) {
       let url = urlMatch[0].replace(/[.,;:!?]+$/, ""); if (seen.has(url)) continue; seen.add(url);
-      if (url.includes("crm5.dynamics.com") || url.includes("msdyn_richtextfiles") || url.includes(".sharepoint.com")) continue;
+      if (url.includes("crm5.dynamics.com") || url.includes("msdyn_richtextfiles")) continue;
+      if (url.includes(".sharepoint.com")) { links.push({ type: "sharepoint", url, text: url.split("?")[0].split("/").pop() || "SharePoint 링크" }); continue; }
       if (url.includes("kohyoung.co:5001/sharing/")) { links.push({ type: "nas", url, text: url.split("/").pop() || "NAS" }); continue; }
       links.push({ type: "external", url, text: url.split("/").pop() || "외부 링크" });
     }
@@ -1390,7 +1476,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     checkRow.appendChild(checkbox); checkRow.appendChild(checkLabel); panel.appendChild(checkRow);
 
     const info = document.createElement("div"); info.style.cssText = "margin-top:12px;padding-top:8px;border-top:1px solid #eee;font-size:11px;color:#999;";
-    info.textContent = "Bookmarklet v4.0 — Main World 실행";
+    info.textContent = `Bookmarklet v${VERSION} — Main World 실행`;
     panel.appendChild(info);
     document.body.appendChild(panel);
   }
@@ -1442,6 +1528,9 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     const hasImages = Object.keys(imageMap).length > 0;
     const hasLinks = links.length > 0;
     const linkAnalysisEnabled = isLinkAnalysisEnabled();
+    _dbg(`[LINK] 추출된 링크: ${links.length}개 (SP: ${links.filter(l => l.type === "sharepoint").length}, NAS: ${links.filter(l => l.type === "nas").length}, CRM PDF: ${links.filter(l => l.type === "crm_pdf").length}, CRM Text: ${links.filter(l => l.type === "crm_text").length}, CRM ZIP: ${links.filter(l => l.type === "crm_zip").length}, 외부: ${links.filter(l => l.type === "external").length})`);
+    for (const l of links) _dbg(`[LINK]   ${l.type}: ${l.text} → ${l.url.substring(0, 80)}...`);
+    _dbg(`[LINK] 링크 분석 활성화: ${linkAnalysisEnabled}`);
 
     showModal("AI 리뷰 생성 중", "", true, hasLinks && linkAnalysisEnabled);
 
