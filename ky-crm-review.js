@@ -90,19 +90,33 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   }
 
   function findMsalToken(resource) {
-    try {
-      for (let i = 0; i < sessionStorage.length; i++) {
-        const key = sessionStorage.key(i);
-        const val = sessionStorage.getItem(key);
-        if (!val || val.length < 50 || val[0] !== "{") continue;
-        try {
-          const parsed = JSON.parse(val);
-          if (parsed.credentialType === "AccessToken" && parsed.secret && parsed.target && parsed.target.toLowerCase().includes(resource)) {
-            if (parsed.expiresOn && parseInt(parsed.expiresOn) > Math.floor(Date.now() / 1000)) return parsed.secret;
+    const now = Math.floor(Date.now() / 1000);
+    const storages = [sessionStorage, localStorage];
+    for (const storage of storages) {
+      try {
+        for (let i = 0; i < storage.length; i++) {
+          const key = storage.key(i);
+          const val = storage.getItem(key);
+          if (!val || val.length < 50) continue;
+          if (val[0] === "{") {
+            try {
+              const parsed = JSON.parse(val);
+              if (parsed.credentialType === "AccessToken" && parsed.secret && parsed.target && parsed.target.toLowerCase().includes(resource)) {
+                if (!parsed.expiresOn || parseInt(parsed.expiresOn) > now) return parsed.secret;
+              }
+            } catch { continue; }
           }
-        } catch { continue; }
-      }
-    } catch { /* ignore */ }
+          if (key.toLowerCase().includes("accesstoken") && key.toLowerCase().includes(resource)) {
+            try {
+              const parsed = JSON.parse(val);
+              if (parsed.secret) {
+                if (!parsed.expiresOn || parseInt(parsed.expiresOn) > now) return parsed.secret;
+              }
+            } catch { continue; }
+          }
+        }
+      } catch { continue; }
+    }
     return null;
   }
 
@@ -627,6 +641,48 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
             const result = await trySharesApi(origin, encoded, 0, { headers: { "Accept": "application/json", "Authorization": `Bearer ${spToken}` } });
             if (result) return result;
           } catch (err) { _dbg(`[SP] Bearer origin ${origin} 예외: ${err.message}`); }
+        }
+      }
+
+      if (await checkProxy()) {
+        _dbg("[SP] 로컬 프록시 + Graph API 시도");
+        const tokens = [findMsalToken("graph.microsoft.com"), findMsalToken("sharepoint.com")].filter(Boolean);
+        for (const token of tokens) {
+          try {
+            const graphUrl = `https://graph.microsoft.com/v1.0/shares/${encoded}/driveItem`;
+            const proxyUrl = `${CORS_PROXY_URL}/fetch?url=${encodeURIComponent(graphUrl)}&token=${encodeURIComponent(token)}&accept=${encodeURIComponent("application/json")}`;
+            const resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
+            if (resp.ok) {
+              const item = await resp.json();
+              _dbg(`[SP] Graph API 성공: ${item.name || "unknown"} (${item.size || 0} bytes)`);
+              const dlUrl = item["@microsoft.graph.downloadUrl"] || item["@content.downloadUrl"];
+              if (dlUrl) return [{ name: item.name, size: item.size, url: dlUrl }];
+              if (item.folder) {
+                const childUrl = `${graphUrl}/children`;
+                const childProxyUrl = `${CORS_PROXY_URL}/fetch?url=${encodeURIComponent(childUrl)}&token=${encodeURIComponent(token)}&accept=${encodeURIComponent("application/json")}`;
+                const childResp = await fetch(childProxyUrl, { signal: AbortSignal.timeout(15000) });
+                if (childResp.ok) {
+                  const childData = await childResp.json();
+                  const files = (childData.value || []).filter(i => !i.folder).map(i => ({ name: i.name, size: i.size, url: i["@microsoft.graph.downloadUrl"] || null }));
+                  if (files.length > 0) { _dbg(`[SP] Graph 폴더: ${files.length}개 파일`); return files; }
+                }
+              }
+            } else { _dbg(`[SP] Graph API 응답: ${resp.status}`); }
+          } catch (err) { _dbg(`[SP] Graph API 프록시 예외: ${err.message}`); }
+        }
+        if (tokens.length === 0) {
+          _dbg("[SP] MSAL 토큰 미발견 — SharePoint 직접 프록시 시도");
+          for (const origin of origins) {
+            try {
+              const apiUrl = `${origin}/_api/v2.0/shares/${encoded}/driveItem`;
+              const proxyUrl = `${CORS_PROXY_URL}/fetch?url=${encodeURIComponent(apiUrl)}&accept=${encodeURIComponent("application/json")}`;
+              const resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
+              if (resp.ok) {
+                const item = await resp.json();
+                if (item.file && item.name) return [{ name: item.name, size: item.size, url: item["@content.downloadUrl"] || null }];
+              }
+            } catch { /* next */ }
+          }
         }
       }
 
