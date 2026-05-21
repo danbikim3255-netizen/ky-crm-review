@@ -1329,26 +1329,37 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     if (document.getElementById(BUTTON_ID)) return;
     if (!window.location.href.includes("etn=incident")) return;
 
-    const wrap = document.createElement("div");
-    wrap.id = BUTTON_ID + "-wrap";
-    wrap.style.cssText = "position:fixed!important;bottom:24px!important;right:24px!important;z-index:99998!important;display:flex!important;gap:6px;align-items:center;";
+    let targetHeading = null;
+    const headings = document.querySelectorAll("h2");
+    for (const h of headings) {
+      if (h.textContent.trim().startsWith("Issue Description")) { targetHeading = h; break; }
+    }
 
-    const btn = document.createElement("button"); btn.id = BUTTON_ID; btn.textContent = "Review";
-    btn.style.cssText = "padding:10px 24px;background:#61A229;color:white;border:none;border-radius:24px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.15);transition:all 0.2s;font-family:'Segoe UI',sans-serif;";
-    btn.addEventListener("mouseenter", () => { btn.style.backgroundColor = "#4E8A22"; btn.style.boxShadow = "0 6px 20px rgba(0,0,0,0.25)"; });
-    btn.addEventListener("mouseleave", () => { btn.style.backgroundColor = "#61A229"; btn.style.boxShadow = "0 4px 16px rgba(0,0,0,0.15)"; });
+    const btn = document.createElement("button"); btn.id = BUTTON_ID; btn.textContent = "리뷰";
+    btn.style.cssText = "margin-left:12px;padding:4px 16px;background-color:#61A229;color:white;border:none;border-radius:4px;font-size:13px;font-weight:600;cursor:pointer;vertical-align:middle;transition:background-color 0.2s;";
+    btn.addEventListener("mouseenter", () => { btn.style.backgroundColor = "#4E8A22"; });
+    btn.addEventListener("mouseleave", () => { btn.style.backgroundColor = "#61A229"; });
     btn.addEventListener("click", handleReviewClick);
-    wrap.appendChild(btn);
 
-    const gear = document.createElement("button"); gear.textContent = "⚙";
-    gear.style.cssText = "width:36px;height:36px;background:white;border:1px solid #ddd;border-radius:50%;font-size:16px;cursor:pointer;color:#666;box-shadow:0 2px 8px rgba(0,0,0,0.1);display:flex;align-items:center;justify-content:center;transition:all 0.2s;";
+    const gear = document.createElement("button"); gear.id = BUTTON_ID + "-gear"; gear.textContent = "⚙";
+    gear.style.cssText = "margin-left:6px;width:26px;height:26px;background:white;border:1px solid #ddd;border-radius:50%;font-size:13px;cursor:pointer;color:#666;vertical-align:middle;transition:all 0.2s;";
     gear.addEventListener("mouseenter", () => { gear.style.borderColor = "#61A229"; gear.style.color = "#61A229"; });
     gear.addEventListener("mouseleave", () => { gear.style.borderColor = "#ddd"; gear.style.color = "#666"; });
     gear.addEventListener("click", toggleSettingsPanel);
-    wrap.appendChild(gear);
 
-    document.body.appendChild(wrap);
-    _dbg("[UI] 리뷰 버튼 생성 완료");
+    if (targetHeading) {
+      targetHeading.parentNode.insertBefore(gear, targetHeading.nextSibling);
+      targetHeading.parentNode.insertBefore(btn, targetHeading.nextSibling);
+      _dbg("[UI] 리뷰 버튼 생성 완료 (Issue Description h2 옆)");
+    } else {
+      const wrap = document.createElement("div");
+      wrap.id = BUTTON_ID + "-wrap";
+      wrap.style.cssText = "position:fixed!important;bottom:24px!important;right:24px!important;z-index:99998!important;display:flex!important;gap:6px!important;align-items:center!important;";
+      wrap.appendChild(btn);
+      wrap.appendChild(gear);
+      document.body.appendChild(wrap);
+      _dbg("[UI] 리뷰 버튼 생성 완료 (플로팅 fallback — h2 미발견)");
+    }
   }
 
   function toggleSettingsPanel() {
@@ -1515,7 +1526,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     style.id = "ky-crm-review-styles";
     style.textContent = [
       "#ky-crm-review-btn-wrap{position:fixed!important;bottom:24px!important;right:24px!important;z-index:99998!important;display:flex!important;gap:6px!important;align-items:center!important;}",
-      "#ky-crm-review-modal-overlay{position:fixed!important;inset:0!important;z-index:100000!important;}",
+      "#ky-crm-review-modal{position:fixed!important;inset:0!important;z-index:100000!important;}",
       "#ky-crm-settings-panel{position:fixed!important;top:80px!important;right:20px!important;z-index:99999!important;}"
     ].join("\n");
     document.head.appendChild(style);
@@ -1529,6 +1540,8 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     if (wrap) wrap.remove();
     const existing = document.getElementById(BUTTON_ID);
     if (existing) existing.remove();
+    const gear = document.getElementById(BUTTON_ID + "-gear");
+    if (gear) gear.remove();
     init();
   }
 
@@ -1539,6 +1552,8 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     if (wrap) wrap.remove();
     const btn = document.getElementById(BUTTON_ID);
     if (btn) btn.remove();
+    const gear = document.getElementById(BUTTON_ID + "-gear");
+    if (gear) gear.remove();
     const settings = document.getElementById(SETTINGS_ID);
     if (settings) settings.remove();
     removeModal();
