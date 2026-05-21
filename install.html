@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KY CRM Review - 북마클릿 설치</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', -apple-system, sans-serif;
+    background: #f5f5f5;
+    color: #333;
+    line-height: 1.6;
+  }
+  .container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 40px 24px;
+  }
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: #1a1a1a;
+  }
+  .version {
+    font-size: 14px;
+    color: #888;
+    margin-bottom: 32px;
+  }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 28px;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .card h2 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: #1a1a1a;
+  }
+  .step {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .step-num {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    background: #4CAF50;
+    color: #fff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .step-content {
+    flex: 1;
+    padding-top: 4px;
+  }
+  .step-content p {
+    margin-bottom: 8px;
+  }
+
+  .bookmarklet-area {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 20px;
+    background: #f0faf0;
+    border: 2px dashed #4CAF50;
+    border-radius: 8px;
+    margin: 16px 0;
+  }
+  .bookmarklet-link {
+    display: inline-block;
+    padding: 12px 24px;
+    background: #4CAF50;
+    color: #fff !important;
+    text-decoration: none !important;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 15px;
+    cursor: grab;
+    white-space: nowrap;
+    user-select: none;
+    transition: background 0.2s;
+  }
+  .bookmarklet-link:hover {
+    background: #388E3C;
+  }
+  .bookmarklet-link:active {
+    cursor: grabbing;
+  }
+  .drag-hint {
+    font-size: 14px;
+    color: #555;
+  }
+  .drag-hint .arrow {
+    font-size: 24px;
+    margin-right: 4px;
+  }
+
+  .manual-code {
+    margin-top: 12px;
+  }
+  .manual-code summary {
+    cursor: pointer;
+    font-size: 13px;
+    color: #666;
+    user-select: none;
+  }
+  .manual-code pre {
+    margin-top: 8px;
+    padding: 12px;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    border-radius: 6px;
+    font-size: 12px;
+    overflow-x: auto;
+    word-break: break-all;
+    white-space: pre-wrap;
+  }
+  .copy-btn {
+    margin-top: 8px;
+    padding: 6px 16px;
+    background: #555;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .copy-btn:hover { background: #333; }
+
+  .warning {
+    padding: 16px;
+    background: #fff8e1;
+    border-left: 4px solid #ffc107;
+    border-radius: 4px;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  .info {
+    padding: 16px;
+    background: #e3f2fd;
+    border-left: 4px solid #2196F3;
+    border-radius: 4px;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+
+  ul { padding-left: 20px; }
+  li { margin-bottom: 6px; }
+  code {
+    background: #f0f0f0;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 13px;
+  }
+
+  .features {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .feature {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 14px;
+  }
+  .feature .icon { font-size: 18px; flex-shrink: 0; }
+
+  .footer {
+    text-align: center;
+    font-size: 13px;
+    color: #999;
+    margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>KY CRM Case Review</h1>
+  <p class="version">Bookmarklet v4.0.0</p>
+
+  <div class="card">
+    <h2>설치 방법</h2>
+
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <p>아래 초록색 버튼을 <strong>북마크 바</strong>로 드래그하세요.</p>
+        <p style="font-size:13px; color:#888;">북마크 바가 안 보이면: <code>Ctrl + Shift + B</code></p>
+      </div>
+    </div>
+
+    <div class="bookmarklet-area">
+      <a class="bookmarklet-link"
+         href="javascript:void((function(){if(window.__kyCrmReview){window.__kyCrmReview.reinit();return;}var s=document.createElement('script');s.src='https://llm.kohyoung.com/static/ky-crm-review.js?v='+Date.now();document.head.appendChild(s);})())"
+         onclick="event.preventDefault();alert('드래그해서 북마크 바에 놓으세요!');"
+         title="북마크 바로 드래그하세요">
+        CRM Review
+      </a>
+      <div class="drag-hint">
+        <span class="arrow">&larr;</span>
+        이 버튼을 북마크 바로 드래그
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <p>CRM 케이스 페이지(<code>kohyoung.crm5.dynamics.com</code>)에서 북마크를 클릭하세요.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <p>화면 오른쪽 아래에 <strong>"AI Review"</strong> 버튼이 나타나면 설치 완료!</p>
+      </div>
+    </div>
+
+    <details class="manual-code">
+      <summary>수동 설치 (드래그가 안 되는 경우)</summary>
+      <p style="margin-top:8px; font-size:13px;">새 북마크를 만들고 아래 코드를 URL 필드에 붙여넣으세요:</p>
+      <pre id="bookmarklet-code">javascript:void((function(){if(window.__kyCrmReview){window.__kyCrmReview.reinit();return;}var s=document.createElement('script');s.src='https://llm.kohyoung.com/static/ky-crm-review.js?v='+Date.now();document.head.appendChild(s);})())</pre>
+      <button class="copy-btn" onclick="copyCode()">복사</button>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>사용법</h2>
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <p>CRM에서 리뷰할 케이스를 엽니다.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <p><strong>Branch Office</strong> 탭이 보이는 상태에서 <strong>"AI Review"</strong> 버튼을 클릭합니다.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <p>AI가 Branch Office 내용을 분석하여 한국어 리뷰를 생성합니다. 완료되면 HQ 셀에 자동 입력됩니다.</p>
+      </div>
+    </div>
+
+    <div class="info">
+      <strong>설정 변경:</strong> AI Review 버튼 옆 ⚙️ 아이콘을 클릭하면 API 키 변경, 첨부파일 자동분석 토글 등을 설정할 수 있습니다.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>주요 기능</h2>
+    <div class="features">
+      <div class="feature"><span class="icon">📝</span><span>Branch Office 텍스트 + 이미지 자동 추출</span></div>
+      <div class="feature"><span class="icon">📎</span><span>CRM 첨부파일 분석 (PDF, ZIP, 텍스트)</span></div>
+      <div class="feature"><span class="icon">🔗</span><span>SharePoint / NAS 링크 자동 탐색</span></div>
+      <div class="feature"><span class="icon">🎬</span><span>동영상 프레임 추출 분석</span></div>
+      <div class="feature"><span class="icon">🤖</span><span>Claude AI 한국어 리뷰 생성</span></div>
+      <div class="feature"><span class="icon">💾</span><span>HQ 셀 자동 입력 (Xrm.Page)</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>기존 확장 프로그램과의 차이</h2>
+    <div class="warning">
+      기존 Chrome 확장 프로그램은 <strong>비활성화 또는 제거</strong>해 주세요. 동시에 사용하면 버튼이 중복 생성될 수 있습니다.
+    </div>
+    <ul>
+      <li><strong>Service Worker 불필요</strong> — 탭 전환 후에도 버튼이 사라지지 않음</li>
+      <li><strong>HQ 셀 쓰기 안정성 향상</strong> — Xrm.Page API 직접 접근</li>
+      <li><strong>첨부파일 인증 문제 해결</strong> — 페이지의 SharePoint 토큰 공유</li>
+      <li><strong>동영상 분석 추가</strong> — 메인 페이지에서 직접 프레임 추출 가능</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>문제 해결</h2>
+    <ul>
+      <li><strong>버튼이 안 보여요</strong> — 북마크를 다시 클릭하세요. Branch Office 탭이 열려 있어야 합니다.</li>
+      <li><strong>"스크립트 로딩 실패"</strong> — 사내 네트워크(VPN)에 연결되어 있는지 확인하세요.</li>
+      <li><strong>리뷰가 생성되지 않아요</strong> — ⚙️ 설정에서 API 키가 올바른지 확인하세요.</li>
+      <li><strong>HQ 셀에 입력이 안 돼요</strong> — 케이스 편집 권한이 있는지 확인하세요.</li>
+    </ul>
+  </div>
+
+  <p class="footer">KoHyoung Technology &middot; Technical Support HQ</p>
+</div>
+
+<script>
+function copyCode() {
+  var code = document.getElementById('bookmarklet-code').textContent;
+  navigator.clipboard.writeText(code).then(function() {
+    var btn = document.querySelector('.copy-btn');
+    btn.textContent = '복사됨!';
+    setTimeout(function() { btn.textContent = '복사'; }, 2000);
+  });
+}
+</script>
+</body>
+</html>
