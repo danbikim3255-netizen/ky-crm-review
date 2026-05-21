@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.2.0";
+  const VERSION = "4.3.0";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -134,6 +134,53 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   async function fetchViaProxy(url, options = {}) {
     const proxyUrl = `${CORS_PROXY_URL}/fetch?url=${encodeURIComponent(url)}`;
     return await fetch(proxyUrl, { signal: options.signal });
+  }
+
+  async function proxyGraphInfo(shareUrl) {
+    const resp = await fetch(`${CORS_PROXY_URL}/graph-info?shareUrl=${encodeURIComponent(shareUrl)}`, { signal: AbortSignal.timeout(30000) });
+    if (resp.status === 401) return { needAuth: true };
+    if (!resp.ok) return null;
+    return await resp.json();
+  }
+
+  async function ensureProxyAuth() {
+    if (!(await checkProxy())) return false;
+    try {
+      const statusResp = await fetch(`${CORS_PROXY_URL}/auth/status`, { signal: AbortSignal.timeout(3000) });
+      const status = await statusResp.json();
+      if (status.authenticated) return true;
+    } catch { return false; }
+    try {
+      const startResp = await fetch(`${CORS_PROXY_URL}/auth/start`, { method: "POST", signal: AbortSignal.timeout(10000) });
+      const startData = await startResp.json();
+      if (startData.error) { _dbg(`[AUTH] 인증 시작 실패: ${startData.error}`); return false; }
+      return await _showAuthModal(startData.userCode, startData.verificationUri);
+    } catch (e) { _dbg(`[AUTH] 인증 예외: ${e.message}`); return false; }
+  }
+
+  function _showAuthModal(userCode, verificationUri) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.id = "ky-auth-modal";
+      overlay.style.cssText = "position:fixed!important;inset:0!important;z-index:100001!important;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;";
+      const modal = document.createElement("div");
+      modal.style.cssText = "background:white;border-radius:12px;padding:28px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.3);font-family:'Malgun Gothic','Segoe UI',sans-serif;text-align:center;";
+      modal.innerHTML = `<h3 style="margin:0 0 12px;color:#2A302F;font-size:16px;">SharePoint 파일 접근 인증</h3><p style="color:#666;font-size:13px;margin:0 0 16px;">아래 코드를 Microsoft 로그인 페이지에 입력하세요.<br>인증은 최초 1회만 필요합니다.</p><div style="background:#f5f5f5;border-radius:8px;padding:16px;margin:0 0 16px;"><span id="ky-auth-code" style="font-size:28px;font-weight:700;letter-spacing:4px;color:#2A302F;cursor:pointer;" title="클릭하여 복사">${userCode}</span></div><a href="${verificationUri}" target="_blank" style="display:inline-block;padding:10px 24px;background:#61A229;color:white;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;margin-bottom:12px;">Microsoft 로그인 페이지 열기</a><p id="ky-auth-status" style="color:#999;font-size:12px;margin:8px 0 0;">인증 완료를 기다리는 중...</p><button id="ky-auth-cancel" style="margin-top:12px;padding:6px 16px;background:none;border:1px solid #ddd;border-radius:4px;color:#999;font-size:12px;cursor:pointer;">건너뛰기</button>`;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const codeEl = modal.querySelector("#ky-auth-code");
+      codeEl.addEventListener("click", () => { navigator.clipboard.writeText(userCode).then(() => { codeEl.style.color = "#61A229"; setTimeout(() => { codeEl.style.color = "#2A302F"; }, 1000); }); });
+      modal.querySelector("#ky-auth-cancel").addEventListener("click", () => { clearInterval(pollId); overlay.remove(); resolve(false); });
+      const pollId = setInterval(async () => {
+        try {
+          const resp = await fetch(`${CORS_PROXY_URL}/auth/check`, { signal: AbortSignal.timeout(3000) });
+          const data = await resp.json();
+          if (data.authenticated) { clearInterval(pollId); overlay.remove(); _dbg("[AUTH] Microsoft 인증 완료"); resolve(true); }
+          else if (!data.pending) { clearInterval(pollId); const s = modal.querySelector("#ky-auth-status"); s.textContent = "인증 실패 또는 만료"; s.style.color = "#d32f2f"; setTimeout(() => { overlay.remove(); resolve(false); }, 2000); }
+        } catch {}
+      }, 3000);
+      setTimeout(() => { clearInterval(pollId); if (document.getElementById("ky-auth-modal")) { overlay.remove(); resolve(false); } }, 600000);
+    });
   }
 
   // ─── 4. 유틸리티 ──────────────────────────────────────────────────
@@ -783,6 +830,28 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
 
   async function fetchSharePointFolder(link) {
     _dbg(`[SP] fetchSharePointFolder: ${link.url.substring(0, 80)}...`);
+    const proxyOk = await checkProxy();
+
+    if (proxyOk) {
+      try {
+        _dbg("[SP] 프록시 Graph API로 파일 정보 조회");
+        const info = await proxyGraphInfo(link.url);
+        if (info && !info.needAuth && !info.error) {
+          if (info.type === "file") {
+            _dbg(`[SP] Graph API 파일: ${info.name} (${info.size} bytes)`);
+            const fileList = [{ name: info.name, size: info.size, url: info.downloadUrl }];
+            return await processSharePointFileList(link, fileList);
+          }
+          if (info.type === "folder" && info.children) {
+            _dbg(`[SP] Graph API 폴더: ${info.children.length}개 항목`);
+            const fileList = info.children.map(c => ({ name: c.name, size: c.size, url: c.downloadUrl }));
+            return await processSharePointFileList(link, fileList);
+          }
+        }
+        if (info && info.error) _dbg(`[SP] Graph API 오류: ${info.error}`);
+      } catch (err) { _dbg(`[SP] Graph API 예외: ${err.message}`); }
+    }
+
     try {
       const sharesFileList = await fetchSharePointViaSharesApi(link.url);
       if (sharesFileList && sharesFileList.length > 0) {
@@ -791,81 +860,38 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       }
     } catch (err) { _dbg(`[SP] Shares API 예외: ${err.message}`); }
 
-    const proxyOk = await checkProxy();
     if (proxyOk) {
-      _dbg("[SP] 로컬 프록시로 SharePoint 파일 다운로드 시도");
+      _dbg("[SP] 프록시로 직접 다운로드 시도");
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000);
-        const resp = await fetchViaProxy(link.url, { signal: controller.signal });
-        clearTimeout(timeoutId);
+        const resp = await fetchViaProxy(link.url, { signal: AbortSignal.timeout(120000) });
         if (resp.ok) {
           const buf = await resp.arrayBuffer();
-          _dbg(`[SP] 프록시 다운로드 성공: ${Math.round(buf.byteLength / 1024)}KB`);
+          _dbg(`[SP] 프록시 다운로드: ${Math.round(buf.byteLength / 1024)}KB`);
           const fileName = link.text || link.url.split("/").pop()?.split("?")[0] || "download";
           const sig = buf.byteLength >= 2 ? new Uint8Array(buf.slice(0, 2)) : null;
           const isZip = /\.zip$/i.test(fileName) || (sig && sig[0] === 0x50 && sig[1] === 0x4B);
           const isPdf = /\.pdf$/i.test(fileName) || (sig && sig[0] === 0x25 && sig[1] === 0x50);
           const isText = /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt|out|err)$/i.test(fileName);
           if (isZip) {
-            _dbg(`[SP] ZIP 파일 분석: ${fileName}`);
             const zipResult = await extractTextFromZipBuffer(buf);
             if (zipResult) {
               let content = "";
               for (const tr of zipResult.textResults) content += `\n\n--- ZIP 내부 텍스트: ${tr.name} ---\n${tr.text}\n--- 끝 ---`;
-              const allE = zipResult.allEntries;
-              const tN = allE.filter((e) => /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt)$/i.test(e.name) && !e.name.endsWith("/"));
-              const iN = allE.filter((e) => getImageMediaType(e.name) && !e.name.endsWith("/"));
-              let zipSum = `ZIP "${fileName}" (총 ${allE.length}개 파일)`;
-              if (tN.length > 0) { zipSum += `\n  텍스트/로그 (${tN.length}개):`; for (const e of tN.slice(0, 30)) zipSum += `\n    - ${e.name} (${Math.round(e.uncompSize / 1024)}KB)`; }
-              if (iN.length > 0) zipSum += `\n  이미지: ${iN.length}개`;
-              content = `${zipSum}${content}`;
-              const zipImages = [];
-              if (zipResult.imageResults) for (const img of zipResult.imageResults) zipImages.push({ ...img, zipName: fileName });
+              const allE = zipResult.allEntries; const tN = allE.filter(e => /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt)$/i.test(e.name) && !e.name.endsWith("/")); const iN = allE.filter(e => getImageMediaType(e.name) && !e.name.endsWith("/"));
+              let zipSum = `ZIP "${fileName}" (총 ${allE.length}개 파일)`; if (tN.length > 0) { zipSum += `\n  텍스트/로그 (${tN.length}개):`; for (const e of tN.slice(0, 30)) zipSum += `\n    - ${e.name} (${Math.round(e.uncompSize / 1024)}KB)`; } if (iN.length > 0) zipSum += `\n  이미지: ${iN.length}개`;
+              content = `${zipSum}${content}`; const zipImages = []; if (zipResult.imageResults) for (const img of zipResult.imageResults) zipImages.push({ ...img, zipName: fileName });
               return { ...link, content, error: null, zipImages };
             }
           }
-          if (isPdf) {
-            _dbg(`[SP] PDF 파일 분석: ${fileName}`);
-            await ensurePdfJsLoaded();
-            const pdfText = await extractPdfText(arrayBufferToBase64(buf));
-            return { ...link, content: `PDF "${fileName}":\n${pdfText.length > MAX_PDF_TEXT_CHARS ? pdfText.substring(0, MAX_PDF_TEXT_CHARS) + "\n... (일부만 포함)" : pdfText}`, error: null };
-          }
-          if (isText) {
-            _dbg(`[SP] 텍스트 파일 분석: ${fileName}`);
-            let text = new TextDecoder("utf-8").decode(buf);
-            if (text.length > MAX_PDF_TEXT_CHARS) text = text.substring(0, MAX_PDF_TEXT_CHARS) + `\n... (일부만 포함)`;
-            return { ...link, content: `텍스트 파일 "${fileName}":\n${text}`, error: null };
-          }
-          return { ...link, content: `SharePoint 파일: "${fileName}" (${Math.round(buf.byteLength / 1024)}KB) — 바이너리 파일`, error: null };
+          if (isPdf) { await ensurePdfJsLoaded(); const pdfText = await extractPdfText(arrayBufferToBase64(buf)); return { ...link, content: `PDF "${fileName}":\n${pdfText.length > MAX_PDF_TEXT_CHARS ? pdfText.substring(0, MAX_PDF_TEXT_CHARS) + "\n... (일부만 포함)" : pdfText}`, error: null }; }
+          if (isText) { let text = new TextDecoder("utf-8").decode(buf); if (text.length > MAX_PDF_TEXT_CHARS) text = text.substring(0, MAX_PDF_TEXT_CHARS) + "\n... (일부만 포함)"; return { ...link, content: `텍스트 파일 "${fileName}":\n${text}`, error: null }; }
+          return { ...link, content: `SharePoint 파일: "${fileName}" (${Math.round(buf.byteLength / 1024)}KB)`, error: null };
         }
-        _dbg(`[SP] 프록시 응답 실패: HTTP ${resp.status}`);
       } catch (err) { _dbg(`[SP] 프록시 다운로드 예외: ${err.message}`); }
     }
 
-    try {
-      _dbg("[SP] 직접 fetch fallback 시도");
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-      const response = await fetch(link.url, { credentials: "include", signal: controller.signal });
-      clearTimeout(timeoutId);
-      if (response.ok) {
-        const contentType = response.headers.get("content-type") || "";
-        if (contentType.includes("application/zip") || contentType.includes("application/octet-stream")) {
-          const buf = await response.arrayBuffer();
-          const fileName = link.text || "download";
-          return await processSharePointFileList(link, [{ name: fileName, size: buf.byteLength, url: null, _buffer: buf }]);
-        }
-        const finalUrl = response.url;
-        let fileList = null;
-        if (finalUrl.includes("/_layouts/15/onedrive.aspx") || finalUrl.includes("/AllItems.aspx")) fileList = await fetchSharePointFilesViaApi(finalUrl);
-        else fileList = parseSharePointFolderHtml(await response.text(), link.url);
-        if (fileList && fileList.length > 0) return await processSharePointFileList(link, fileList);
-      }
-    } catch (err) { _dbg(`[SP] 직접 fetch 예외: ${err.message}`); }
-
     _dbg("[SP] 모든 방법 실패");
-    const msg = proxyOk ? "프록시 경유 다운로드 실패" : "CORS 차단 — 로컬 프록시(localhost:18765) 미실행";
+    const msg = proxyOk ? "인증 필요 — Microsoft 인증을 진행해주세요" : "CORS 차단 — 로컬 프록시(localhost:18765) 미실행";
     return { ...link, content: `SharePoint 파일 "${link.text}" — ${msg}. 수동 확인 필요\nURL: ${link.url}`, error: null };
   }
 
@@ -1608,6 +1634,29 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     const checkLabel = document.createElement("span"); checkLabel.textContent = "첨부 링크 자동 분석"; checkLabel.style.cssText = "font-size:13px;";
     checkRow.appendChild(checkbox); checkRow.appendChild(checkLabel); panel.appendChild(checkRow);
 
+    const authRow = document.createElement("div"); authRow.style.cssText = "margin-top:8px;margin-bottom:8px;";
+    const authBtn = document.createElement("button"); authBtn.textContent = "SharePoint 인증 확인";
+    authBtn.style.cssText = "padding:6px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:4px;font-size:12px;cursor:pointer;color:#666;width:100%;";
+    authBtn.addEventListener("click", async () => {
+      authBtn.textContent = "확인 중..."; authBtn.disabled = true;
+      try {
+        const proxyOk = await checkProxy();
+        if (!proxyOk) { authBtn.textContent = "프록시 미실행"; authBtn.style.color = "#d32f2f"; return; }
+        const resp = await fetch(`${CORS_PROXY_URL}/auth/status`, { signal: AbortSignal.timeout(3000) });
+        const st = await resp.json();
+        if (st.authenticated) { authBtn.textContent = "인증됨 ✓"; authBtn.style.color = "#2E7D32"; }
+        else {
+          authBtn.textContent = "인증 시작...";
+          panel.remove();
+          const ok = await ensureProxyAuth();
+          if (ok) alert("Microsoft 인증 완료!");
+          else alert("인증 취소 또는 실패");
+        }
+      } catch { authBtn.textContent = "프록시 연결 실패"; authBtn.style.color = "#d32f2f"; }
+      finally { authBtn.disabled = false; }
+    });
+    authRow.appendChild(authBtn); panel.appendChild(authRow);
+
     const info = document.createElement("div"); info.style.cssText = "margin-top:12px;padding-top:8px;border-top:1px solid #eee;font-size:11px;color:#999;";
     info.textContent = `Bookmarklet v${VERSION} — Main World 실행`;
     panel.appendChild(info);
@@ -1665,6 +1714,18 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     for (const l of links) _dbg(`[LINK]   ${l.type}: ${l.text} → ${l.url.substring(0, 80)}...`);
     _dbg(`[LINK] 링크 분석 활성화: ${linkAnalysisEnabled}`);
 
+    const spLinks = links.filter((l) => l.type === "sharepoint");
+    if (spLinks.length > 0 && linkAnalysisEnabled && (await checkProxy())) {
+      try {
+        const statusResp = await fetch(`${CORS_PROXY_URL}/auth/status`, { signal: AbortSignal.timeout(3000) });
+        const status = await statusResp.json();
+        if (!status.authenticated) {
+          _dbg("[AUTH] SharePoint 링크 감지 — Microsoft 인증 시작");
+          await ensureProxyAuth();
+        }
+      } catch {}
+    }
+
     showModal("AI 리뷰 생성 중", "", true, hasLinks && linkAnalysisEnabled);
 
     try {
@@ -1679,6 +1740,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
           sharepointLinks = links.filter((l) => l.type === "sharepoint");
           externalLinks = links.filter((l) => l.type === "external");
           nasLinks = links.filter((l) => l.type === "nas");
+          if (sharepointLinks.length > 0) updateLoadingMessage("SharePoint 파일을 분석하고 있습니다...");
           if (nasLinks.length > 0) updateLoadingMessage("NAS 공유 파일을 다운로드하고 있습니다...");
         }
         const annotations = await fetchCrmAnnotations();
