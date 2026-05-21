@@ -1326,8 +1326,10 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   function updateLoadingMessage(msg) { const el = document.getElementById("ky-loading-msg"); if (el) el.textContent = msg; }
 
   function createReviewButton() {
-    if (document.getElementById(BUTTON_ID)) return;
     if (!window.location.href.includes("etn=incident")) return;
+    const existingBtn = document.getElementById(BUTTON_ID);
+    if (existingBtn && existingBtn.dataset.source === "bookmarklet") return;
+    if (existingBtn) { existingBtn.remove(); _dbg("[UI] 확장 프로그램 버튼 제거 (북마클릿으로 대체)"); }
 
     let targetHeading = null;
     const headings = document.querySelectorAll("h2");
@@ -1335,7 +1337,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       if (h.textContent.trim().startsWith("Issue Description")) { targetHeading = h; break; }
     }
 
-    const btn = document.createElement("button"); btn.id = BUTTON_ID; btn.textContent = "리뷰";
+    const btn = document.createElement("button"); btn.id = BUTTON_ID; btn.dataset.source = "bookmarklet"; btn.textContent = "리뷰";
     btn.style.cssText = "margin-left:12px;padding:4px 16px;background-color:#61A229;color:white;border:none;border-radius:4px;font-size:13px;font-weight:600;cursor:pointer;vertical-align:middle;transition:background-color 0.2s;";
     btn.addEventListener("mouseenter", () => { btn.style.backgroundColor = "#4E8A22"; });
     btn.addEventListener("mouseleave", () => { btn.style.backgroundColor = "#61A229"; });
@@ -1536,7 +1538,8 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   async function init() {
     injectStyles();
     if (_initRunning) return;
-    if (document.getElementById(BUTTON_ID)) return;
+    const existingBtn = document.getElementById(BUTTON_ID);
+    if (existingBtn && existingBtn.dataset.source === "bookmarklet") return;
     if (!window.location.href.includes("etn=incident")) return;
 
     const h2Found = [...document.querySelectorAll("h2")].some(h => h.textContent.trim().startsWith("Issue Description"));
