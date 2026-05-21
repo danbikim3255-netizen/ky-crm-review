@@ -1298,7 +1298,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   function showModal(title, content, isLoading, hasLinks) {
     removeModal();
     const overlay = document.createElement("div"); overlay.id = MODAL_ID;
-    overlay.style.cssText = "position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;";
+    overlay.style.cssText = "position:fixed!important;inset:0!important;z-index:100000!important;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;";
     const modal = document.createElement("div");
     modal.style.cssText = "background:white;border-radius:12px;padding:28px;max-width:700px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3);font-family:'Malgun Gothic','Segoe UI',sans-serif;";
     const titleEl = document.createElement("h3"); titleEl.textContent = title;
@@ -1331,7 +1331,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
 
     const wrap = document.createElement("div");
     wrap.id = BUTTON_ID + "-wrap";
-    wrap.style.cssText = "position:fixed;bottom:24px;right:24px;z-index:99998;display:flex;gap:6px;align-items:center;";
+    wrap.style.cssText = "position:fixed!important;bottom:24px!important;right:24px!important;z-index:99998!important;display:flex!important;gap:6px;align-items:center;";
 
     const btn = document.createElement("button"); btn.id = BUTTON_ID; btn.textContent = "Review";
     btn.style.cssText = "padding:10px 24px;background:#61A229;color:white;border:none;border-radius:24px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.15);transition:all 0.2s;font-family:'Segoe UI',sans-serif;";
@@ -1355,7 +1355,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     const existing = document.getElementById(SETTINGS_ID);
     if (existing) { existing.remove(); return; }
     const panel = document.createElement("div"); panel.id = SETTINGS_ID;
-    panel.style.cssText = "position:fixed;top:80px;right:20px;z-index:99999;background:white;border-radius:12px;padding:20px;width:320px;box-shadow:0 8px 32px rgba(0,0,0,0.2);font-family:'Malgun Gothic','Segoe UI',sans-serif;";
+    panel.style.cssText = "position:fixed!important;top:80px!important;right:20px!important;z-index:99999!important;background:white;border-radius:12px;padding:20px;width:320px;box-shadow:0 8px 32px rgba(0,0,0,0.2);font-family:'Malgun Gothic','Segoe UI',sans-serif;";
     const title = document.createElement("div"); title.innerHTML = `<b style="font-size:15px;color:#2A302F;">KY CRM Review v${VERSION}</b>`;
     title.style.cssText = "margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #61A229;display:flex;justify-content:space-between;align-items:center;";
     const closeX = document.createElement("span"); closeX.textContent = "✕"; closeX.style.cssText = "cursor:pointer;color:#999;font-size:18px;";
@@ -1509,7 +1509,19 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   let _observer = null;
   let _intervalId = null;
 
-  function init() { createReviewButton(); }
+  function injectStyles() {
+    if (document.getElementById("ky-crm-review-styles")) return;
+    const style = document.createElement("style");
+    style.id = "ky-crm-review-styles";
+    style.textContent = [
+      "#ky-crm-review-btn-wrap{position:fixed!important;bottom:24px!important;right:24px!important;z-index:99998!important;display:flex!important;gap:6px!important;align-items:center!important;}",
+      "#ky-crm-review-modal-overlay{position:fixed!important;inset:0!important;z-index:100000!important;}",
+      "#ky-crm-settings-panel{position:fixed!important;top:80px!important;right:20px!important;z-index:99999!important;}"
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function init() { injectStyles(); createReviewButton(); }
 
   function reinit() {
     _dbg("[INIT] reinit 호출");
