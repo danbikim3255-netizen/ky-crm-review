@@ -184,6 +184,120 @@
     color: #999;
     margin-top: 40px;
   }
+
+  /* 드래그 가이드 다이어그램 */
+  .drag-guide {
+    margin: 20px 0 8px;
+    padding: 0;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .browser-mock {
+    position: relative;
+  }
+  .browser-titlebar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #e8e8e8;
+    border-bottom: 1px solid #d0d0d0;
+  }
+  .browser-dots {
+    display: flex;
+    gap: 5px;
+  }
+  .browser-dots span {
+    width: 10px; height: 10px; border-radius: 50%;
+  }
+  .browser-dots span:nth-child(1) { background: #ff5f57; }
+  .browser-dots span:nth-child(2) { background: #febc2e; }
+  .browser-dots span:nth-child(3) { background: #28c840; }
+  .browser-addressbar {
+    flex: 1;
+    background: #fff;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+    color: #888;
+  }
+  .browser-bookmarkbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: #f5f5f5;
+    border-bottom: 1px solid #e0e0e0;
+    min-height: 32px;
+  }
+  .browser-bookmarkbar-label {
+    font-size: 10px;
+    color: #aaa;
+    white-space: nowrap;
+  }
+  .bm-item {
+    font-size: 11px;
+    color: #555;
+    background: #e8e8e8;
+    padding: 3px 10px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .bm-item-new {
+    font-size: 11px;
+    color: #fff;
+    background: #4CAF50;
+    padding: 3px 10px;
+    border-radius: 3px;
+    font-weight: 600;
+    white-space: nowrap;
+    border: 2px dashed #FF5722;
+    animation: bm-pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes bm-pulse {
+    0%, 100% { border-color: #FF5722; }
+    50% { border-color: transparent; }
+  }
+  .browser-body {
+    position: relative;
+    padding: 24px 20px;
+    min-height: 100px;
+    background: #fafafa;
+  }
+  .drag-arrow-area {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+  }
+  .drag-source {
+    display: inline-block;
+    padding: 10px 20px;
+    background: #4CAF50;
+    color: #fff;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .drag-arrow-svg {
+    flex-shrink: 0;
+  }
+  .drag-target-label {
+    font-size: 13px;
+    color: #FF5722;
+    font-weight: 600;
+    text-align: center;
+    line-height: 1.4;
+  }
+  .drag-guide-caption {
+    text-align: center;
+    font-size: 12px;
+    color: #999;
+    margin-top: 6px;
+    margin-bottom: 4px;
+  }
 </style>
 </head>
 <body>
@@ -202,16 +316,48 @@
       </div>
     </div>
 
+    <!-- 드래그 방법 시각 가이드 -->
+    <div class="drag-guide">
+      <div class="browser-mock">
+        <div class="browser-titlebar">
+          <div class="browser-dots"><span></span><span></span><span></span></div>
+          <div class="browser-addressbar">kohyoung.crm5.dynamics.com</div>
+        </div>
+        <div class="browser-bookmarkbar">
+          <span class="browser-bookmarkbar-label">북마크 바 &rarr;</span>
+          <span class="bm-item">Google</span>
+          <span class="bm-item">CRM</span>
+          <span class="bm-item-new">Review</span>
+          <span style="font-size:11px; color:#FF5722;">&larr; 여기에 놓기!</span>
+        </div>
+        <div class="browser-body">
+          <div class="drag-arrow-area">
+            <div class="drag-source">Review</div>
+            <svg class="drag-arrow-svg" width="80" height="60" viewBox="0 0 80 60">
+              <defs>
+                <marker id="ah" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                  <polygon points="0 0, 8 3, 0 6" fill="#FF5722"/>
+                </marker>
+              </defs>
+              <path d="M5,50 Q40,50 60,15" stroke="#FF5722" stroke-width="2.5" fill="none" stroke-dasharray="6,3" marker-end="url(#ah)"/>
+            </svg>
+            <div class="drag-target-label">위쪽 북마크 바로<br>드래그해서 놓기</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="drag-guide-caption">아래 초록 버튼을 마우스로 잡고, 브라우저 상단 북마크 바 위치에 놓으세요</p>
+
     <div class="bookmarklet-area">
       <a class="bookmarklet-link"
          href="javascript:void((function(){if(window.__kyCrmReview){window.__kyCrmReview.reinit();return;}var s=document.createElement('script');s.src='https://danbikim3255-netizen.github.io/ky-crm-review/ky-crm-review.js?v='+Date.now();document.head.appendChild(s);})())"
-         onclick="event.preventDefault();alert('드래그해서 북마크 바에 놓으세요!');"
-         title="북마크 바로 드래그하세요">
+         onclick="event.preventDefault();alert('이 버튼을 마우스로 잡고 위쪽 북마크 바로 끌어다 놓으세요!');"
+         title="이 버튼을 마우스로 잡고 위쪽 북마크 바로 끌어다 놓으세요">
         Review
       </a>
       <div class="drag-hint">
-        <span class="arrow">&larr;</span>
-        이 버튼을 북마크 바로 드래그
+        <span class="arrow">&uarr;</span>
+        이 버튼을 마우스로 잡고 위쪽 북마크 바로 끌어다 놓으세요
       </div>
     </div>
 
