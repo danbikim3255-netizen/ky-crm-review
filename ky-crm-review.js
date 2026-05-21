@@ -9,7 +9,8 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.1.0";
+  const VERSION = "4.2.0";
+  const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
   const MAX_TOTAL_LINKED_CHARS = 400000;
@@ -103,6 +104,22 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       }
     } catch { /* ignore */ }
     return null;
+  }
+
+  let _proxyAvailable = null;
+  async function checkProxy() {
+    if (_proxyAvailable !== null) return _proxyAvailable;
+    try {
+      const resp = await fetch(`${CORS_PROXY_URL}/health`, { signal: AbortSignal.timeout(1500) });
+      _proxyAvailable = resp.ok;
+    } catch { _proxyAvailable = false; }
+    _dbg(`[PROXY] 로컬 프록시 상태: ${_proxyAvailable ? "사용 가능" : "미실행"}`);
+    return _proxyAvailable;
+  }
+
+  async function fetchViaProxy(url, options = {}) {
+    const proxyUrl = `${CORS_PROXY_URL}/fetch?url=${encodeURIComponent(url)}`;
+    return await fetch(proxyUrl, { signal: options.signal });
   }
 
   // ─── 4. 유틸리티 ──────────────────────────────────────────────────
@@ -624,8 +641,12 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     let textContents = "";
     for (const tf of textFiles) {
       try {
-        const tfResp = await fetch(tf.url, { credentials: "include" });
-        if (!tfResp.ok) continue;
+        let tfResp;
+        try { tfResp = await fetch(tf.url, { credentials: "include" }); } catch { tfResp = null; }
+        if (!tfResp || !tfResp.ok) {
+          if (await checkProxy()) { try { tfResp = await fetchViaProxy(tf.url); } catch { tfResp = null; } }
+        }
+        if (!tfResp || !tfResp.ok) continue;
         const buf = await tfResp.arrayBuffer();
         let text = new TextDecoder("utf-8").decode(buf);
         if (text.length > MAX_PDF_TEXT_CHARS) text = text.substring(0, MAX_PDF_TEXT_CHARS) + `\n... (${Math.round(text.length / 1024)}KB 중 일부만 포함)`;
@@ -643,11 +664,20 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
         if (zf._buffer) {
           _dbg(`[SP ZIP] ${zf.name}: 직접 다운로드 버퍼 사용 (${Math.round(zf._buffer.byteLength / 1024)}KB)`);
           zipResult = await extractTextFromZipBuffer(zf._buffer);
-        } else if (fileSize > 0 && fileSize < MAX_SP_FULL_DOWNLOAD && zf.url) {
-          try {
-            const zipResp = await fetch(zf.url, { credentials: "include" });
-            if (zipResp.ok) zipResult = await extractTextFromZipBuffer(await zipResp.arrayBuffer());
-          } catch (e) { _dbg(`[SP ZIP] ${zf.name}: 전체 다운로드 실패 — ${e.message}`); }
+        } else if (zf.url) {
+          if (fileSize > 0 && fileSize < MAX_SP_FULL_DOWNLOAD) {
+            try {
+              const zipResp = await fetch(zf.url, { credentials: "include" });
+              if (zipResp.ok) zipResult = await extractTextFromZipBuffer(await zipResp.arrayBuffer());
+            } catch (e) { _dbg(`[SP ZIP] ${zf.name}: 직접 다운로드 실패 — ${e.message}`); }
+          }
+          if (!zipResult && await checkProxy()) {
+            try {
+              _dbg(`[SP ZIP] ${zf.name}: 프록시 경유 다운로드 시도`);
+              const zipResp = await fetchViaProxy(zf.url);
+              if (zipResp.ok) zipResult = await extractTextFromZipBuffer(await zipResp.arrayBuffer());
+            } catch (e) { _dbg(`[SP ZIP] ${zf.name}: 프록시 다운로드 실패 — ${e.message}`); }
+          }
         }
         if (!zipResult && zf.url) zipResult = await extractTextFilesFromZip(zf.url, fileSize);
         if (!zipResult) continue;
@@ -696,44 +726,91 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   }
 
   async function fetchSharePointFolder(link) {
+    _dbg(`[SP] fetchSharePointFolder: ${link.url.substring(0, 80)}...`);
     try {
-      _dbg(`[SP] fetchSharePointFolder: ${link.url.substring(0, 80)}...`);
       const sharesFileList = await fetchSharePointViaSharesApi(link.url);
       if (sharesFileList && sharesFileList.length > 0) {
         _dbg(`[SP] Shares API 성공: ${sharesFileList.length}개 파일`);
         return await processSharePointFileList(link, sharesFileList);
       }
-      _dbg("[SP] Shares API 실패 — 직접 fetch fallback 시도");
+    } catch (err) { _dbg(`[SP] Shares API 예외: ${err.message}`); }
+
+    const proxyOk = await checkProxy();
+    if (proxyOk) {
+      _dbg("[SP] 로컬 프록시로 SharePoint 파일 다운로드 시도");
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 120000);
+        const resp = await fetchViaProxy(link.url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (resp.ok) {
+          const buf = await resp.arrayBuffer();
+          _dbg(`[SP] 프록시 다운로드 성공: ${Math.round(buf.byteLength / 1024)}KB`);
+          const fileName = link.text || link.url.split("/").pop()?.split("?")[0] || "download";
+          const sig = buf.byteLength >= 2 ? new Uint8Array(buf.slice(0, 2)) : null;
+          const isZip = /\.zip$/i.test(fileName) || (sig && sig[0] === 0x50 && sig[1] === 0x4B);
+          const isPdf = /\.pdf$/i.test(fileName) || (sig && sig[0] === 0x25 && sig[1] === 0x50);
+          const isText = /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt|out|err)$/i.test(fileName);
+          if (isZip) {
+            _dbg(`[SP] ZIP 파일 분석: ${fileName}`);
+            const zipResult = await extractTextFromZipBuffer(buf);
+            if (zipResult) {
+              let content = "";
+              for (const tr of zipResult.textResults) content += `\n\n--- ZIP 내부 텍스트: ${tr.name} ---\n${tr.text}\n--- 끝 ---`;
+              const allE = zipResult.allEntries;
+              const tN = allE.filter((e) => /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt)$/i.test(e.name) && !e.name.endsWith("/"));
+              const iN = allE.filter((e) => getImageMediaType(e.name) && !e.name.endsWith("/"));
+              let zipSum = `ZIP "${fileName}" (총 ${allE.length}개 파일)`;
+              if (tN.length > 0) { zipSum += `\n  텍스트/로그 (${tN.length}개):`; for (const e of tN.slice(0, 30)) zipSum += `\n    - ${e.name} (${Math.round(e.uncompSize / 1024)}KB)`; }
+              if (iN.length > 0) zipSum += `\n  이미지: ${iN.length}개`;
+              content = `${zipSum}${content}`;
+              const zipImages = [];
+              if (zipResult.imageResults) for (const img of zipResult.imageResults) zipImages.push({ ...img, zipName: fileName });
+              return { ...link, content, error: null, zipImages };
+            }
+          }
+          if (isPdf) {
+            _dbg(`[SP] PDF 파일 분석: ${fileName}`);
+            await ensurePdfJsLoaded();
+            const pdfText = await extractPdfText(arrayBufferToBase64(buf));
+            return { ...link, content: `PDF "${fileName}":\n${pdfText.length > MAX_PDF_TEXT_CHARS ? pdfText.substring(0, MAX_PDF_TEXT_CHARS) + "\n... (일부만 포함)" : pdfText}`, error: null };
+          }
+          if (isText) {
+            _dbg(`[SP] 텍스트 파일 분석: ${fileName}`);
+            let text = new TextDecoder("utf-8").decode(buf);
+            if (text.length > MAX_PDF_TEXT_CHARS) text = text.substring(0, MAX_PDF_TEXT_CHARS) + `\n... (일부만 포함)`;
+            return { ...link, content: `텍스트 파일 "${fileName}":\n${text}`, error: null };
+          }
+          return { ...link, content: `SharePoint 파일: "${fileName}" (${Math.round(buf.byteLength / 1024)}KB) — 바이너리 파일`, error: null };
+        }
+        _dbg(`[SP] 프록시 응답 실패: HTTP ${resp.status}`);
+      } catch (err) { _dbg(`[SP] 프록시 다운로드 예외: ${err.message}`); }
+    }
+
+    try {
+      _dbg("[SP] 직접 fetch fallback 시도");
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
       const response = await fetch(link.url, { credentials: "include", signal: controller.signal });
       clearTimeout(timeoutId);
-      if (!response.ok) {
-        _dbg(`[SP] 직접 fetch 실패: HTTP ${response.status}`);
-        return { ...link, content: null, error: `HTTP ${response.status}` };
-      }
-      const finalUrl = response.url;
-      _dbg(`[SP] 직접 fetch 리다이렉트: ${finalUrl.substring(0, 80)}...`);
-      const contentType = response.headers.get("content-type") || "";
-      if (contentType.includes("application/zip") || contentType.includes("application/octet-stream") || contentType.includes("application/x-zip")) {
-        _dbg("[SP] 직접 다운로드 응답 감지 — ZIP/바이너리 처리");
-        const buf = await response.arrayBuffer();
-        const fileName = link.text || link.url.split("/").pop()?.split("?")[0] || "download";
-        if (/\.zip$/i.test(fileName) || buf.byteLength > 100 && new Uint8Array(buf.slice(0, 2)).toString() === "80,75") {
+      if (response.ok) {
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("application/zip") || contentType.includes("application/octet-stream")) {
+          const buf = await response.arrayBuffer();
+          const fileName = link.text || "download";
           return await processSharePointFileList(link, [{ name: fileName, size: buf.byteLength, url: null, _buffer: buf }]);
         }
-        return { ...link, content: `SharePoint 파일: "${fileName}" (${Math.round(buf.byteLength / 1024)}KB) — 바이너리 파일, 텍스트 추출 불가`, error: null };
+        const finalUrl = response.url;
+        let fileList = null;
+        if (finalUrl.includes("/_layouts/15/onedrive.aspx") || finalUrl.includes("/AllItems.aspx")) fileList = await fetchSharePointFilesViaApi(finalUrl);
+        else fileList = parseSharePointFolderHtml(await response.text(), link.url);
+        if (fileList && fileList.length > 0) return await processSharePointFileList(link, fileList);
       }
-      let fileList = null;
-      if (finalUrl.includes("/_layouts/15/onedrive.aspx") || finalUrl.includes("/AllItems.aspx")) { fileList = await fetchSharePointFilesViaApi(finalUrl); }
-      else { fileList = parseSharePointFolderHtml(await response.text(), link.url); }
-      if (fileList && fileList.length > 0) return await processSharePointFileList(link, fileList);
-      _dbg("[SP] 파일 목록 추출 불가");
-      return { ...link, content: `SharePoint 링크: "${link.text}" - CORS 또는 권한 문제로 자동 분석 불가. 수동 확인 필요\nURL: ${link.url}`, error: null };
-    } catch (err) {
-      _dbg(`[SP] fetchSharePointFolder 예외: ${err.name} — ${err.message}`);
-      return { ...link, content: `SharePoint 링크: "${link.text}" - 자동 분석 실패 (${err.name === "AbortError" ? "Timeout" : "CORS/네트워크 오류"}). 수동 확인 필요\nURL: ${link.url}`, error: null };
-    }
+    } catch (err) { _dbg(`[SP] 직접 fetch 예외: ${err.message}`); }
+
+    _dbg("[SP] 모든 방법 실패");
+    const msg = proxyOk ? "프록시 경유 다운로드 실패" : "CORS 차단 — 로컬 프록시(localhost:18765) 미실행";
+    return { ...link, content: `SharePoint 파일 "${link.text}" — ${msg}. 수동 확인 필요\nURL: ${link.url}`, error: null };
   }
 
   function parseSharePointFolderHtml(html, folderUrl) {
