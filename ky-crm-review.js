@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.5.0";
+  const VERSION = "4.5.1";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -1328,6 +1328,8 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
         links.push({ type: "sharepoint", url: href, text: text || "SharePoint 링크" });
       } else if (href.includes("kohyoung.co:5001/sharing/")) {
         links.push({ type: "nas", url: href, text: text || "NAS 공유 파일" });
+      } else if (href.startsWith("http") && !href.includes("crm5.dynamics.com")) {
+        links.push({ type: "external", url: href, text: text || href.split("/").pop() || "외부 링크" });
       }
     }
     const allText = editor.innerText || "";
