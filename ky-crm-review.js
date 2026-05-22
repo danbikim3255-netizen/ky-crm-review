@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.3.4";
+  const VERSION = "4.3.5";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -1438,12 +1438,25 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   async function callApi(content) {
     const apiKey = getApiKey();
     const maxRetries = 3;
+    const reqBody = JSON.stringify({ model: MODEL, max_tokens: 8192, system: SYSTEM_PROMPT, messages: [{ role: "user", content }] });
+    const useProxy = await checkProxy();
+    if (useProxy) _dbg(`[API] 프록시 경유 (${(reqBody.length / 1024 / 1024).toFixed(2)}MB)`);
+
     for (let attempt = 0; attempt < maxRetries; attempt++) {
-      const resp = await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: MODEL, max_tokens: 8192, system: SYSTEM_PROMPT, messages: [{ role: "user", content }] }),
-      });
+      let resp;
+      try {
+        if (useProxy) {
+          const proxyUrl = `${CORS_PROXY_URL}/api?url=${encodeURIComponent(API_URL)}&key=${encodeURIComponent(apiKey)}&anthropic-version=2023-06-01`;
+          resp = await fetch(proxyUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: reqBody });
+        } else {
+          resp = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" }, body: reqBody });
+        }
+      } catch (fetchErr) {
+        if (useProxy) {
+          _dbg(`[API] 프록시 실패, 직접 호출 시도: ${fetchErr.message}`);
+          resp = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" }, body: reqBody });
+        } else throw fetchErr;
+      }
       if (!resp.ok) {
         const errBody = await resp.text();
         if (resp.status === 401) throw new Error("API 키가 유효하지 않습니다. 설정에서 키를 확인해주세요.");
