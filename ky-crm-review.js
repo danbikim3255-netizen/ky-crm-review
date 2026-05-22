@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.3.0";
+  const VERSION = "4.3.1";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -216,28 +216,65 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     return textParts.join("\n\n");
   }
 
-  // ─── 6. ZIP 처리 ──────────────────────────────────────────────────
+  // ─── 6. ZIP 처리 (ZIP64 지원) ──────────────────────────────────────
+  function _readUint64(view, off) {
+    const lo = view.getUint32(off, true);
+    const hi = view.getUint32(off + 4, true);
+    return hi * 0x100000000 + lo;
+  }
+
   function parseZipBuffer(buf) {
     const view = new DataView(buf);
     let eocdPos = -1;
-    for (let i = buf.byteLength - 22; i >= 0; i--) {
+    for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 65557); i--) {
       if (view.getUint32(i, true) === 0x06054b50) { eocdPos = i; break; }
     }
     if (eocdPos === -1) return null;
-    const cdEntries = view.getUint16(eocdPos + 10, true);
-    const cdOffset = view.getUint32(eocdPos + 16, true);
+    let cdEntries = view.getUint16(eocdPos + 10, true);
+    let cdOffset = view.getUint32(eocdPos + 16, true);
+
+    if (cdEntries === 0xFFFF || cdOffset === 0xFFFFFFFF) {
+      const locPos = eocdPos - 20;
+      if (locPos >= 0 && view.getUint32(locPos, true) === 0x07064b50) {
+        const z64EocdOff = _readUint64(view, locPos + 8);
+        if (z64EocdOff + 56 <= buf.byteLength && view.getUint32(z64EocdOff, true) === 0x06064b50) {
+          cdEntries = _readUint64(view, z64EocdOff + 32);
+          cdOffset = _readUint64(view, z64EocdOff + 48);
+          _dbg(`[ZIP64] entries=${cdEntries}, cdOffset=${cdOffset}`);
+        }
+      }
+    }
+
     const entries = [];
     let pos = cdOffset;
     for (let i = 0; i < cdEntries && pos + 46 <= buf.byteLength; i++) {
       if (view.getUint32(pos, true) !== 0x02014b50) break;
       const method = view.getUint16(pos + 10, true);
-      const compSize = view.getUint32(pos + 20, true);
-      const uncompSize = view.getUint32(pos + 24, true);
+      let compSize = view.getUint32(pos + 20, true);
+      let uncompSize = view.getUint32(pos + 24, true);
       const nameLen = view.getUint16(pos + 28, true);
       const extraLen = view.getUint16(pos + 30, true);
       const commentLen = view.getUint16(pos + 32, true);
-      const localOffset = view.getUint32(pos + 42, true);
+      let localOffset = view.getUint32(pos + 42, true);
       const name = new TextDecoder().decode(new Uint8Array(buf, pos + 46, nameLen));
+
+      if (uncompSize === 0xFFFFFFFF || compSize === 0xFFFFFFFF || localOffset === 0xFFFFFFFF) {
+        let eOff = pos + 46 + nameLen;
+        const eEnd = eOff + extraLen;
+        while (eOff + 4 <= eEnd) {
+          const hid = view.getUint16(eOff, true);
+          const hsz = view.getUint16(eOff + 2, true);
+          if (hid === 0x0001 && eOff + 4 + hsz <= eEnd) {
+            let fp = eOff + 4;
+            if (uncompSize === 0xFFFFFFFF) { uncompSize = _readUint64(view, fp); fp += 8; }
+            if (compSize === 0xFFFFFFFF) { compSize = _readUint64(view, fp); fp += 8; }
+            if (localOffset === 0xFFFFFFFF) { localOffset = _readUint64(view, fp); }
+            break;
+          }
+          eOff += 4 + hsz;
+        }
+      }
+
       entries.push({ name, method, compSize, uncompSize, localOffset });
       pos += 46 + nameLen + extraLen + commentLen;
     }
