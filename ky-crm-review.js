@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.4.1";
+  const VERSION = "4.5.0";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -1146,6 +1146,34 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   // ─── 9. 외부 파일 ─────────────────────────────────────────────────
   async function fetchExternalFile(link) {
     try {
+      const isWeTransfer = /we\.tl\/|wetransfer\.com\//i.test(link.url);
+      if (isWeTransfer && await checkProxy()) {
+        _dbg(`[WT] WeTransfer 프록시 다운로드: ${link.url}`);
+        const resp = await fetch(`${CORS_PROXY_URL}/wetransfer?url=${encodeURIComponent(link.url)}`);
+        if (!resp.ok) { const err = await resp.text(); return { type: "external", text: link.text, content: `WeTransfer 링크: ${link.url}\n(다운로드 실패: ${err})`, error: err }; }
+        const buffer = await resp.arrayBuffer();
+        const contentType = resp.headers.get("content-type") || "";
+        const isZip = contentType.includes("zip") || contentType.includes("octet-stream");
+        if (isZip) {
+          const zipResult = await extractTextFromZipBuffer(buffer);
+          if (!zipResult) return { type: "external", text: link.text, content: null, error: "ZIP 파싱 실패" };
+          let content = "";
+          for (const tr of zipResult.textResults) content += `\n\n--- ZIP 내부 텍스트: ${tr.name} ---\n${tr.text}\n--- 끝 ---`;
+          const allE = zipResult.allEntries;
+          const tN = allE.filter((e) => /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt)$/i.test(e.name) && !e.name.endsWith("/"));
+          const iN = allE.filter((e) => getImageMediaType(e.name) && !e.name.endsWith("/"));
+          let zipSum = `WeTransfer ZIP "${link.text}" (총 ${allE.length}개 파일)`;
+          if (tN.length > 0) { zipSum += `\n  텍스트/로그 (${tN.length}개):`; for (const e of tN.slice(0, 30)) zipSum += `\n    - ${e.name} (${Math.round(e.uncompSize / 1024)}KB)`; }
+          if (iN.length > 0) zipSum += `\n  이미지: ${iN.length}개`;
+          content = `${zipSum}${content}`;
+          return { type: "external", text: link.text, content: content.length > MAX_TOTAL_LINKED_CHARS ? content.substring(0, MAX_TOTAL_LINKED_CHARS) + "\n... (잘림)" : content, error: null, zipImages: (zipResult.imageResults || []).map((img) => ({ ...img, zipName: link.text })) };
+        }
+        let text = new TextDecoder("utf-8").decode(buffer);
+        if (text.length > MAX_PDF_TEXT_CHARS) text = text.substring(0, MAX_PDF_TEXT_CHARS) + `\n... (일부만 포함)`;
+        return { type: "external", text: link.text, content: text, error: null };
+      }
+      if (isWeTransfer) return { type: "external", text: link.text, content: `WeTransfer 링크: ${link.url}\n(CORS 프록시 미실행 — 수동 확인 필요)`, error: "프록시 필요" };
+
       const urls = [link.url];
       if (link.url.includes("/sharing/") && !link.url.includes("kohyoung.co:5001")) {
         const shareId = link.url.split("/sharing/").pop().split("?")[0];
