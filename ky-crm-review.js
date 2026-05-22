@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.5.1";
+  const VERSION = "4.5.2";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -1150,7 +1150,13 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       if (isWeTransfer && await checkProxy()) {
         _dbg(`[WT] WeTransfer 프록시 다운로드: ${link.url}`);
         const resp = await fetch(`${CORS_PROXY_URL}/wetransfer?url=${encodeURIComponent(link.url)}`);
-        if (!resp.ok) { const err = await resp.text(); return { type: "external", text: link.text, content: `WeTransfer 링크: ${link.url}\n(다운로드 실패: ${err})`, error: err }; }
+        if (!resp.ok) {
+          const errText = await resp.text();
+          let errMsg = errText;
+          try { const j = JSON.parse(errText); errMsg = j.error || errText; } catch {}
+          _dbg(`[WT] 실패 (${resp.status}): ${errMsg}`);
+          return { type: "external", text: link.text, content: `WeTransfer "${link.text}": ${errMsg}`, error: errMsg };
+        }
         const buffer = await resp.arrayBuffer();
         const contentType = resp.headers.get("content-type") || "";
         const isZip = contentType.includes("zip") || contentType.includes("octet-stream");
