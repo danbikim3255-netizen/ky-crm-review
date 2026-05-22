@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.3.3";
+  const VERSION = "4.3.4";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -122,13 +122,13 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   }
 
   let _proxyAvailable = null;
-  async function checkProxy() {
-    if (_proxyAvailable !== null) return _proxyAvailable;
+  async function checkProxy(forceRecheck = false) {
+    if (_proxyAvailable !== null && !forceRecheck) return _proxyAvailable;
     try {
-      const resp = await fetch(`${CORS_PROXY_URL}/health`, { signal: AbortSignal.timeout(1500) });
+      const resp = await fetch(`${CORS_PROXY_URL}/health`, { signal: AbortSignal.timeout(2000) });
       _proxyAvailable = resp.ok;
     } catch { _proxyAvailable = false; }
-    _dbg(`[PROXY] 로컬 프록시 상태: ${_proxyAvailable ? "사용 가능" : "미실행"}`);
+    _dbg(`[PROXY] 로컬 프록시 상태: ${_proxyAvailable ? "사용 가능" : "미실행"}${forceRecheck ? " (재확인)" : ""}`);
     return _proxyAvailable;
   }
 
@@ -1779,6 +1779,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     showModal("AI 리뷰 생성 중", "", true, hasLinks && linkAnalysisEnabled);
 
     try {
+      _proxyAvailable = null;
       let pdfData = [], textFileData = [], sharepointLinks = [], zipData = [], externalLinks = [], nasLinks = [];
 
       if (linkAnalysisEnabled) {
