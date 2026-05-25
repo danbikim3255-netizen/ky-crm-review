@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.6.2";
+  const VERSION = "4.6.3";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -1654,7 +1654,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
         if (line.startsWith("[파일:") || line.startsWith("[PDF:") || line.startsWith("[폴더:") || line.startsWith("[Log") || line.startsWith("[ZIP")) return `<p style="margin:0;">&nbsp;</p><p style="margin:0;padding:3px 8px;background:#FFF3E0;border-left:3px solid #FF6F00;"><b><span style="color:#E65100;">${linkifyUrls(line.replace(/^\[|\]$/g, ""))}</span></b></p>`;
         if (line.trim() === "") return `<p style="margin:0;">&nbsp;</p>`;
         if (line.trim().startsWith("•")) return `<p style="margin:0;">&nbsp;&nbsp;&nbsp;&nbsp;${linkifyUrls(line.trim())}</p>`;
-        if (line.trim().startsWith("→")) return `<p style="margin:0;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${linkifyUrls(line.trim())}</p>`;
+        if (line.trim().startsWith("→")) return `<p style="margin:0;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>${linkifyUrls(line.trim())}</b></p>`;
         return `<p style="margin:0;">&nbsp;&nbsp;&nbsp;&nbsp;${linkifyUrls(line)}</p>`;
       }
       if (line.startsWith("[TS HQ")) return `<p style="margin: 0;"><b><span style="color:#2E7D32;">${line}</span></b></p>`;
