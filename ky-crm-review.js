@@ -9,14 +9,14 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.6.5";
+  const VERSION = "4.7.0";
   const CORS_PROXY_URL = "http://localhost:18765";
 
-  const MAX_PDF_TEXT_CHARS = 200000;
-  const MAX_TOTAL_LINKED_CHARS = 400000;
+  const MAX_PDF_TEXT_CHARS = Number.MAX_SAFE_INTEGER;
+  const MAX_TOTAL_LINKED_CHARS = Number.MAX_SAFE_INTEGER;
   const FETCH_TIMEOUT_MS = 15000;
 
-  const MAX_ZIP_TEXT_FILES = 100;
+  const MAX_ZIP_TEXT_FILES = Number.MAX_SAFE_INTEGER;
   const MAX_ZIP_TEXT_FILE_SIZE = Number.MAX_SAFE_INTEGER;
   const MAX_ZIP_IMAGES = 5;
   const MAX_NESTED_ZIP_SIZE = Number.MAX_SAFE_INTEGER;
@@ -753,7 +753,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       try {
         let zipResult = null;
         const fileSize = zf.size ? Number(zf.size) : (zf._buffer ? zf._buffer.byteLength : 0);
-        const MAX_SP_FULL_DOWNLOAD = 200 * 1024 * 1024;
+        const MAX_SP_FULL_DOWNLOAD = Number.MAX_SAFE_INTEGER;
         if (zf._buffer) {
           _dbg(`[SP ZIP] ${zf.name}: 직접 다운로드 버퍼 사용 (${Math.round(zf._buffer.byteLength / 1024)}KB)`);
           zipResult = await extractTextFromZipBuffer(zf._buffer);
@@ -816,8 +816,8 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     }
 
     const knownNames = new Set([...textFiles, ...zipFiles, ...videoFiles, ...imageFiles].map(f => f.name));
-    const unknownFiles = fileList.filter((f) => f.name && f.url && !knownNames.has(f.name) && !/\.pdf$/i.test(f.name) && (!f.size || Number(f.size) < 5 * 1024 * 1024));
-    for (const uf of unknownFiles.slice(0, 20)) {
+    const unknownFiles = fileList.filter((f) => f.name && f.url && !knownNames.has(f.name) && !/\.pdf$/i.test(f.name));
+    for (const uf of unknownFiles) {
       try {
         let ufResp;
         try { ufResp = await fetch(uf.url, { credentials: "include" }); } catch { ufResp = null; }
@@ -1492,7 +1492,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   async function callApi(content) {
     const apiKey = getApiKey();
     const maxRetries = 3;
-    const reqBody = JSON.stringify({ model: MODEL, max_tokens: 8192, system: SYSTEM_PROMPT, messages: [{ role: "user", content }] });
+    const reqBody = JSON.stringify({ model: MODEL, max_tokens: 16384, system: SYSTEM_PROMPT, messages: [{ role: "user", content }] });
     const useProxy = await checkProxy();
     if (useProxy) _dbg(`[API] 프록시 경유 (${(reqBody.length / 1024 / 1024).toFixed(2)}MB)`);
 
