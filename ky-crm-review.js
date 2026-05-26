@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.7.3";
+  const VERSION = "4.7.4";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -1333,10 +1333,27 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     return { branchContent, hqCell };
   }
 
-  function extractTextAndImages(html) {
+  async function imgToBase64(imgEl) {
+    try {
+      const src = imgEl.src;
+      if (src.startsWith("data:")) return src;
+      const resp = await fetch(src, { credentials: "include" });
+      if (!resp.ok) return src;
+      const blob = await resp.blob();
+      return await new Promise((resolve) => { const reader = new FileReader(); reader.onloadend = () => resolve(reader.result); reader.readAsDataURL(blob); });
+    } catch { return imgEl.src; }
+  }
+
+  async function extractTextAndImages(html) {
     const div = document.createElement("div"); div.innerHTML = html;
     const imgs = div.querySelectorAll("img"); const imageMap = {};
-    imgs.forEach((img, idx) => { const key = `[IMAGE_${idx + 1}]`; imageMap[key] = `<img src="${img.src}" alt="${img.alt || ""}" style="max-width:100%;">`; img.replaceWith(key); });
+    for (let idx = 0; idx < imgs.length; idx++) {
+      const img = imgs[idx];
+      const key = `[IMAGE_${idx + 1}]`;
+      const base64Src = await imgToBase64(img);
+      imageMap[key] = `<img src="${base64Src}" alt="${img.alt || ""}" style="max-width:100%;">`;
+      img.replaceWith(key);
+    }
     const origin = window.location.origin;
     for (const a of div.querySelectorAll("a[href]")) { let href = a.getAttribute("href"); if (!href || href === "#") continue; if (href.startsWith("/")) href = origin + href; const lt = a.textContent.trim(); if (lt && href.startsWith("http")) a.replaceWith(`${lt} ( ${href} )`); }
     return { text: div.innerText.trim(), imageMap };
@@ -1833,7 +1850,20 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     const { branchContent, hqCell } = findContent(editor);
     if (!branchContent) { alert("케이스 내용을 찾을 수 없습니다."); return; }
     if (!hqCell) { alert("HQ 셀을 찾을 수 없습니다."); return; }
-    const { text: branchText, imageMap } = extractTextAndImages(branchContent);
+    const { text: branchText, imageMap } = await extractTextAndImages(branchContent);
+    const editorImgCount = editor.querySelectorAll("img").length;
+    const branchImgCount = Object.keys(imageMap).length;
+    _dbg(`[IMG] 에디터 전체 이미지: ${editorImgCount}개, Branch 셀 이미지: ${branchImgCount}개`);
+    if (editorImgCount > 0 && branchImgCount === 0) {
+      _dbg("[IMG] Branch 셀에 이미지 없음 — 에디터 전체에서 이미지 수집");
+      const allImgs = editor.querySelectorAll("img");
+      for (let idx = 0; idx < allImgs.length; idx++) {
+        const key = `[IMAGE_${idx + 1}]`;
+        const base64Src = await imgToBase64(allImgs[idx]);
+        imageMap[key] = `<img src="${base64Src}" alt="${allImgs[idx].alt || ""}" style="max-width:100%;">`;
+      }
+      _dbg(`[IMG] 에디터에서 ${allImgs.length}개 이미지 수집 완료`);
+    }
     if (!branchText || branchText.length < 10) { alert("케이스 내용이 너무 짧습니다."); return; }
 
     const links = extractLinks(editor);
