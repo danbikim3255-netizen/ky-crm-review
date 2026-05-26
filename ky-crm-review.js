@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.6.4";
+  const VERSION = "4.6.5";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -729,7 +729,8 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
 
   async function processSharePointFileList(link, fileList) {
     const summary = fileList.map((f) => `- ${f.name} (${f.size ? Math.round(Number(f.size) / 1024 / 1024) + "MB" : "크기 불명"})`).join("\n");
-    const textFiles = fileList.filter((f) => f.name && /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt|out|err)$/i.test(f.name) && f.url);
+    const TEXT_FILE_RE = /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt|out|err|yaml|yml|properties|md|htm|html|bat|sh|ps1|py|js|ts|env|toml|reg|inf|sql|sln|csproj|config|manifest|rule|drl|dmp)$/i;
+    const textFiles = fileList.filter((f) => f.name && TEXT_FILE_RE.test(f.name) && f.url);
     let textContents = "";
     for (const tf of textFiles) {
       try {
@@ -811,6 +812,25 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
         const imgBuf = await imgResp.arrayBuffer();
         if (imgBuf.byteLength > MAX_ZIP_IMAGE_SIZE) continue;
         zipImages.push({ name: imgFile.name, base64: uint8ArrayToBase64(new Uint8Array(imgBuf)), mediaType: getImageMediaType(imgFile.name) });
+      } catch { /* skip */ }
+    }
+
+    const knownNames = new Set([...textFiles, ...zipFiles, ...videoFiles, ...imageFiles].map(f => f.name));
+    const unknownFiles = fileList.filter((f) => f.name && f.url && !knownNames.has(f.name) && !/\.pdf$/i.test(f.name) && (!f.size || Number(f.size) < 5 * 1024 * 1024));
+    for (const uf of unknownFiles.slice(0, 20)) {
+      try {
+        let ufResp;
+        try { ufResp = await fetch(uf.url, { credentials: "include" }); } catch { ufResp = null; }
+        if (!ufResp || !ufResp.ok) { if (await checkProxy()) { try { ufResp = await fetchViaProxy(uf.url); } catch { ufResp = null; } } }
+        if (!ufResp || !ufResp.ok) continue;
+        const buf = await ufResp.arrayBuffer();
+        const bytes = new Uint8Array(buf.slice(0, Math.min(512, buf.byteLength)));
+        let nullCount = 0; for (const b of bytes) { if (b === 0) nullCount++; }
+        if (nullCount > bytes.length * 0.1) continue;
+        let text = new TextDecoder("utf-8").decode(buf);
+        if (text.length > MAX_PDF_TEXT_CHARS) text = text.substring(0, MAX_PDF_TEXT_CHARS) + `\n... (일부만 포함)`;
+        _dbg(`[SP] 미분류 파일 텍스트 성공: ${uf.name} (${text.length} chars)`);
+        textContents += `\n\n--- 텍스트 파일: ${uf.name} ---\n${text}\n--- 끝 ---`;
       } catch { /* skip */ }
     }
 
@@ -904,7 +924,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
           const sig = buf.byteLength >= 2 ? new Uint8Array(buf.slice(0, 2)) : null;
           const isZip = /\.zip$/i.test(fileName) || (sig && sig[0] === 0x50 && sig[1] === 0x4B);
           const isPdf = /\.pdf$/i.test(fileName) || (sig && sig[0] === 0x25 && sig[1] === 0x50);
-          const isText = /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt|out|err)$/i.test(fileName);
+          const isText = /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt|out|err|yaml|yml|properties|md|htm|html|bat|sh|ps1|py|js|ts|env|toml|reg|inf|sql|config|manifest|rule|drl)$/i.test(fileName);
           if (isZip) {
             _dbg(`[SP] ZIP 파일 분석: ${fileName}`);
             const zipResult = await extractTextFromZipBuffer(buf);
@@ -933,6 +953,14 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
             _dbg(`[SP] 텍스트 파일 분석: ${fileName}`);
             let text = new TextDecoder("utf-8").decode(buf);
             if (text.length > MAX_PDF_TEXT_CHARS) text = text.substring(0, MAX_PDF_TEXT_CHARS) + `\n... (일부만 포함)`;
+            return { ...link, content: `텍스트 파일 "${fileName}":\n${text}`, error: null };
+          }
+          const probe = new Uint8Array(buf.slice(0, Math.min(512, buf.byteLength)));
+          let nulls = 0; for (const b of probe) { if (b === 0) nulls++; }
+          if (nulls < probe.length * 0.1) {
+            let text = new TextDecoder("utf-8").decode(buf);
+            if (text.length > MAX_PDF_TEXT_CHARS) text = text.substring(0, MAX_PDF_TEXT_CHARS) + `\n... (일부만 포함)`;
+            _dbg(`[SP] 미분류 파일 텍스트 판별 성공: ${fileName}`);
             return { ...link, content: `텍스트 파일 "${fileName}":\n${text}`, error: null };
           }
           return { ...link, content: `SharePoint 파일: "${fileName}" (${Math.round(buf.byteLength / 1024)}KB) — 바이너리 파일`, error: null };
