@@ -1,4 +1,4 @@
-// KY CRM Case Review Bookmarklet v4.3.0
+// KY CRM Case Review Bookmarklet v4.8.0
 // Chrome Extension(v3.1) → Bookmarklet 전환
 // Main World에서 실행: Xrm.Page 직접 접근, 페이지 인증 토큰 공유, SW 의존성 제거
 (function () {
@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.7.5";
+  const VERSION = "4.8.0";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -1202,6 +1202,45 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       }
       if (isWeTransfer) return { type: "external", text: link.text, content: `WeTransfer 링크: ${link.url}\n(CORS 프록시 미실행 — 수동 확인 필요)`, error: "프록시 필요" };
 
+      const isDropbox = /dropbox\.com\//i.test(link.url) || /dropboxusercontent\.com\//i.test(link.url);
+      if (isDropbox && await checkProxy()) {
+        _dbg(`[DB] Dropbox 프록시 다운로드: ${link.url}`);
+        const resp = await fetch(`${CORS_PROXY_URL}/dropbox?url=${encodeURIComponent(link.url)}`, { timeout: 300000 });
+        if (!resp.ok) {
+          const errText = await resp.text();
+          let errMsg = errText;
+          try { const j = JSON.parse(errText); errMsg = j.error || errText; } catch {}
+          _dbg(`[DB] 실패 (${resp.status}): ${errMsg}`);
+          return { type: "external", text: link.text, content: `Dropbox "${link.text}": ${errMsg}`, error: errMsg };
+        }
+        const data = await resp.json();
+        if (data.type === "text") {
+          return { type: "external", text: link.text, content: data.content, error: null };
+        }
+        if (data.type === "pdf") {
+          try {
+            const pdfText = await extractPdfText(data.base64);
+            return { type: "external", text: link.text, content: pdfText.length > MAX_PDF_TEXT_CHARS ? pdfText.substring(0, MAX_PDF_TEXT_CHARS) + "\n... (일부만 포함)" : pdfText, error: null };
+          } catch (e) { return { type: "external", text: link.text, content: `Dropbox PDF "${link.text}": 텍스트 추출 실패 — ${e.message}`, error: e.message }; }
+        }
+        if (data.type === "unknown") {
+          return { type: "external", text: link.text, content: `Dropbox "${link.text}": ${data.message} (${Math.round(data.size / 1024)}KB)`, error: null };
+        }
+        // ZIP result (files, images, allEntries)
+        const allE = data.allEntries || [];
+        const tN = allE.filter((e) => /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt)$/i.test(e.name) && !e.name.endsWith("/"));
+        const iN = allE.filter((e) => getImageMediaType(e.name) && !e.name.endsWith("/"));
+        let zipSum = `Dropbox ZIP "${link.text}" (총 ${allE.length}개 파일)`;
+        if (tN.length > 0) { zipSum += `\n  텍스트/로그 (${tN.length}개):`; for (const e of tN.slice(0, 30)) zipSum += `\n    - ${e.name} (${Math.round(e.uncompSize / 1024)}KB)`; }
+        if (iN.length > 0) zipSum += `\n  이미지: ${iN.length}개`;
+        let content = zipSum;
+        for (const f of (data.files || [])) content += `\n\n--- ZIP 내부 텍스트: ${f.name} ---\n${f.text}\n--- 끝 ---`;
+        const zipImages = (data.images || []).map((img) => ({ name: img.name, base64: img.base64, mediaType: img.mediaType, zipName: link.text }));
+        _dbg(`[DB] 완료: ${(data.files || []).length}개 텍스트, ${zipImages.length}개 이미지`);
+        return { type: "external", text: link.text, content: content.length > MAX_TOTAL_LINKED_CHARS ? content.substring(0, MAX_TOTAL_LINKED_CHARS) + "\n... (잘림)" : content, error: null, zipImages };
+      }
+      if (isDropbox) return { type: "external", text: link.text, content: `Dropbox 링크: ${link.url}\n(CORS 프록시 미실행 — 수동 확인 필요)`, error: "프록시 필요" };
+
       const urls = [link.url];
       if (link.url.includes("/sharing/") && !link.url.includes("kohyoung.co:5001")) {
         const shareId = link.url.split("/sharing/").pop().split("?")[0];
@@ -1699,7 +1738,11 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       if (inLinkedSection) {
         if (line.startsWith("[파일:") || line.startsWith("[PDF:") || line.startsWith("[폴더:") || line.startsWith("[Log") || line.startsWith("[ZIP")) return `<p style="margin:0;">&nbsp;</p><p style="margin:0;padding:3px 8px;background:#FFF3E0;border-left:3px solid #FF6F00;"><b><span style="color:#E65100;">${linkifyUrls(line.replace(/^\[|\]$/g, ""))}</span></b></p>`;
         if (line.trim() === "") return `<p style="margin:0;">&nbsp;</p>`;
-        if (line.trim().startsWith("•")) return `<p style="margin:0;">&nbsp;&nbsp;&nbsp;&nbsp;${linkifyUrls(line.trim())}</p>`;
+        if (line.trim().startsWith("•")) {
+          const t = line.trim(), ai = t.indexOf("→");
+          if (ai > 0) { const bp = t.substring(0, ai).trim(), ap = t.substring(ai).trim(); return `<p style="margin:0;">&nbsp;&nbsp;&nbsp;&nbsp;${linkifyUrls(bp)}</p><p style="margin:0;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>${linkifyUrls(ap)}</b></p>`; }
+          return `<p style="margin:0;">&nbsp;&nbsp;&nbsp;&nbsp;${linkifyUrls(t)}</p>`;
+        }
         if (line.trim().startsWith("→")) return `<p style="margin:0;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>${linkifyUrls(line.trim())}</b></p>`;
         return `<p style="margin:0;">&nbsp;&nbsp;&nbsp;&nbsp;${linkifyUrls(line)}</p>`;
       }
