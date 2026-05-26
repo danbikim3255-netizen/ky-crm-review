@@ -9,11 +9,11 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.7.0";
+  const VERSION = "4.7.1";
   const CORS_PROXY_URL = "http://localhost:18765";
 
-  const MAX_PDF_TEXT_CHARS = Number.MAX_SAFE_INTEGER;
-  const MAX_TOTAL_LINKED_CHARS = Number.MAX_SAFE_INTEGER;
+  const MAX_PDF_TEXT_CHARS = 500000;
+  const MAX_TOTAL_LINKED_CHARS = 2000000;
   const FETCH_TIMEOUT_MS = 15000;
 
   const MAX_ZIP_TEXT_FILES = Number.MAX_SAFE_INTEGER;
