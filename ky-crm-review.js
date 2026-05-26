@@ -9,11 +9,11 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.7.1";
+  const VERSION = "4.7.2";
   const CORS_PROXY_URL = "http://localhost:18765";
 
-  const MAX_PDF_TEXT_CHARS = 500000;
-  const MAX_TOTAL_LINKED_CHARS = 2000000;
+  const MAX_PDF_TEXT_CHARS = 200000;
+  const MAX_TOTAL_LINKED_CHARS = 800000;
   const FETCH_TIMEOUT_MS = 15000;
 
   const MAX_ZIP_TEXT_FILES = Number.MAX_SAFE_INTEGER;
@@ -1491,7 +1491,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   // ─── 13. 리뷰 처리 ────────────────────────────────────────────────
   async function callApi(content) {
     const apiKey = getApiKey();
-    const maxRetries = 3;
+    const maxRetries = 5;
     const reqBody = JSON.stringify({ model: MODEL, max_tokens: 16384, system: SYSTEM_PROMPT, messages: [{ role: "user", content }] });
     const useProxy = await checkProxy();
     if (useProxy) _dbg(`[API] 프록시 경유 (${(reqBody.length / 1024 / 1024).toFixed(2)}MB)`);
@@ -1515,8 +1515,8 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
         const errBody = await resp.text();
         if (resp.status === 401) throw new Error("API 키가 유효하지 않습니다. 설정에서 키를 확인해주세요.");
         if (resp.status === 429) throw new Error("API 요청이 너무 많습니다. 잠시 후 다시 시도해주세요.");
-        if ((resp.status === 529 || resp.status === 503) && attempt < maxRetries - 1) {
-          const wait = (attempt + 1) * 5;
+        if ((resp.status === 529 || resp.status === 503 || resp.status === 504 || resp.status === 502) && attempt < maxRetries - 1) {
+          const wait = (attempt + 1) * 10;
           _dbg(`[API] ${resp.status} 과부하 — ${wait}초 후 재시도 (${attempt + 1}/${maxRetries})`);
           try { updateLoadingMessage(`API 서버 과부하... ${wait}초 후 재시도 (${attempt + 1}/${maxRetries})`); } catch {}
           await new Promise(r => setTimeout(r, wait * 1000));
