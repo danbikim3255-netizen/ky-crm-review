@@ -1,4 +1,4 @@
-// KY CRM Case Review Bookmarklet v4.8.0
+// KY CRM Case Review Bookmarklet v4.8.1
 // Chrome Extension(v3.1) → Bookmarklet 전환
 // Main World에서 실행: Xrm.Page 직접 접근, 페이지 인증 토큰 공유, SW 의존성 제거
 (function () {
@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.8.0";
+  const VERSION = "4.8.1";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -731,14 +731,17 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   async function processSharePointFileList(link, fileList) {
     const summary = fileList.map((f) => `- ${f.name} (${f.size ? Math.round(Number(f.size) / 1024 / 1024) + "MB" : "크기 불명"})`).join("\n");
     const TEXT_FILE_RE = /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt|out|err|yaml|yml|properties|md|htm|html|bat|sh|ps1|py|js|ts|env|toml|reg|inf|sql|sln|csproj|config|manifest|rule|drl|dmp)$/i;
-    const textFiles = fileList.filter((f) => f.name && TEXT_FILE_RE.test(f.name) && f.url);
+    const SKIP_EXT_RE = /\.(pat|exe|msi|iso|bin|dll|sys|cab|wim|vhd|vhdx|bak|img|tar|gz|7z|rar)$/i;
+    const MAX_SP_FILE_SIZE = 100 * 1024 * 1024;
+    const SP_FETCH_TIMEOUT = 60000;
+    const textFiles = fileList.filter((f) => f.name && TEXT_FILE_RE.test(f.name) && f.url && (!f.size || Number(f.size) < MAX_SP_FILE_SIZE));
     let textContents = "";
     for (const tf of textFiles) {
       try {
         let tfResp;
-        try { tfResp = await fetch(tf.url, { credentials: "include" }); } catch { tfResp = null; }
+        try { tfResp = await fetch(tf.url, { credentials: "include", signal: AbortSignal.timeout(SP_FETCH_TIMEOUT) }); } catch { tfResp = null; }
         if (!tfResp || !tfResp.ok) {
-          if (await checkProxy()) { try { tfResp = await fetchViaProxy(tf.url); } catch { tfResp = null; } }
+          if (await checkProxy()) { try { tfResp = await fetchViaProxy(tf.url, { signal: AbortSignal.timeout(SP_FETCH_TIMEOUT) }); } catch { tfResp = null; } }
         }
         if (!tfResp || !tfResp.ok) continue;
         const buf = await tfResp.arrayBuffer();
@@ -748,27 +751,26 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       } catch { /* skip */ }
     }
 
-    const zipFiles = fileList.filter((f) => f.name && /\.zip$/i.test(f.name) && (f.url || f._buffer));
+    const zipFiles = fileList.filter((f) => f.name && /\.zip$/i.test(f.name) && (f.url || f._buffer) && (!f.size || Number(f.size) < MAX_SP_FILE_SIZE));
     const zipImages = [];
     for (const zf of zipFiles) {
       try {
         let zipResult = null;
         const fileSize = zf.size ? Number(zf.size) : (zf._buffer ? zf._buffer.byteLength : 0);
-        const MAX_SP_FULL_DOWNLOAD = Number.MAX_SAFE_INTEGER;
         if (zf._buffer) {
           _dbg(`[SP ZIP] ${zf.name}: 직접 다운로드 버퍼 사용 (${Math.round(zf._buffer.byteLength / 1024)}KB)`);
           zipResult = await extractTextFromZipBuffer(zf._buffer);
         } else if (zf.url) {
-          if (fileSize > 0 && fileSize < MAX_SP_FULL_DOWNLOAD) {
+          if (fileSize === 0 || fileSize < MAX_SP_FILE_SIZE) {
             try {
-              const zipResp = await fetch(zf.url, { credentials: "include" });
+              const zipResp = await fetch(zf.url, { credentials: "include", signal: AbortSignal.timeout(SP_FETCH_TIMEOUT) });
               if (zipResp.ok) zipResult = await extractTextFromZipBuffer(await zipResp.arrayBuffer());
             } catch (e) { _dbg(`[SP ZIP] ${zf.name}: 직접 다운로드 실패 — ${e.message}`); }
           }
           if (!zipResult && await checkProxy()) {
             try {
               _dbg(`[SP ZIP] ${zf.name}: 프록시 경유 다운로드 시도`);
-              const zipResp = await fetchViaProxy(zf.url);
+              const zipResp = await fetchViaProxy(zf.url, { signal: AbortSignal.timeout(120000) });
               if (zipResp.ok) zipResult = await extractTextFromZipBuffer(await zipResp.arrayBuffer());
             } catch (e) { _dbg(`[SP ZIP] ${zf.name}: 프록시 다운로드 실패 — ${e.message}`); }
           }
@@ -817,12 +819,12 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     }
 
     const knownNames = new Set([...textFiles, ...zipFiles, ...videoFiles, ...imageFiles].map(f => f.name));
-    const unknownFiles = fileList.filter((f) => f.name && f.url && !knownNames.has(f.name) && !/\.pdf$/i.test(f.name));
+    const unknownFiles = fileList.filter((f) => f.name && f.url && !knownNames.has(f.name) && !/\.pdf$/i.test(f.name) && !SKIP_EXT_RE.test(f.name) && (!f.size || Number(f.size) < MAX_SP_FILE_SIZE));
     for (const uf of unknownFiles) {
       try {
         let ufResp;
-        try { ufResp = await fetch(uf.url, { credentials: "include" }); } catch { ufResp = null; }
-        if (!ufResp || !ufResp.ok) { if (await checkProxy()) { try { ufResp = await fetchViaProxy(uf.url); } catch { ufResp = null; } } }
+        try { ufResp = await fetch(uf.url, { credentials: "include", signal: AbortSignal.timeout(SP_FETCH_TIMEOUT) }); } catch { ufResp = null; }
+        if (!ufResp || !ufResp.ok) { if (await checkProxy()) { try { ufResp = await fetchViaProxy(uf.url, { signal: AbortSignal.timeout(SP_FETCH_TIMEOUT) }); } catch { ufResp = null; } } }
         if (!ufResp || !ufResp.ok) continue;
         const buf = await ufResp.arrayBuffer();
         const bytes = new Uint8Array(buf.slice(0, Math.min(512, buf.byteLength)));
@@ -1632,7 +1634,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       } catch (err) { linkedContent.push({ type: "crm_zip", text: zd.text, content: null, error: err.message }); }
     }
 
-    const spResults = await Promise.allSettled(sharepointLinks.map((link) => fetchSharePointFolder(link)));
+    const spResults = await Promise.allSettled(sharepointLinks.map((link) => Promise.race([fetchSharePointFolder(link), new Promise((_, rej) => setTimeout(() => rej(new Error("SharePoint 전체 타임아웃 (3분)")), 180000))])));
     for (const result of spResults) {
       if (result.status === "fulfilled") { linkedContent.push(result.value); if (result.value.zipImages) allZipImages.push(...result.value.zipImages); }
       else linkedContent.push({ type: "sharepoint", text: "Unknown", content: null, error: result.reason?.message || "Unknown error" });
