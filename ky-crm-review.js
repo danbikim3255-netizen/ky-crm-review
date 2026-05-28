@@ -1,4 +1,4 @@
-// KY CRM Case Review Bookmarklet v4.15.0
+// KY CRM Case Review Bookmarklet v4.16.0
 // Chrome Extension(v3.1) → Bookmarklet 전환
 // Main World에서 실행: Xrm.Page 직접 접근, 페이지 인증 토큰 공유, SW 의존성 제거
 (function () {
@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.15.0";
+  const VERSION = "4.16.0";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -1952,7 +1952,10 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     }
     if (!branchText || branchText.length < 10) { alert("케이스 내용이 너무 짧습니다."); return; }
 
-    const links = extractLinks(editor);
+    const branchDiv = document.createElement("div");
+    branchDiv.innerHTML = branchContent;
+    const links = extractLinks(branchDiv);
+    _dbg("[LINK] Branch Office 셀에서만 링크 추출 (HQ 셀 제외)");
     const pageNasLinks = extractNasLinksFromPage(links);
     if (pageNasLinks.length > 0) links.push(...pageNasLinks);
     const hasImages = Object.keys(imageMap).length > 0;
