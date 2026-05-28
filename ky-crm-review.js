@@ -1,4 +1,4 @@
-// KY CRM Case Review Bookmarklet v4.14.0
+// KY CRM Case Review Bookmarklet v4.15.0
 // Chrome Extension(v3.1) → Bookmarklet 전환
 // Main World에서 실행: Xrm.Page 직접 접근, 페이지 인증 토큰 공유, SW 의존성 제거
 (function () {
@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.14.0";
+  const VERSION = "4.15.0";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -1730,7 +1730,19 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
         }
       }
       if (!hqCell) return "hq_not_found";
-      hqCell.innerHTML = hqHtml;
+      const existingHtml = hqCell.innerHTML;
+      const aiMarker = existingHtml.indexOf("[TS HQ Reviewed by AI");
+      if (aiMarker > 0) {
+        const pStart = existingHtml.lastIndexOf("<p", aiMarker);
+        const preserved = pStart > 0 ? existingHtml.substring(0, pStart) : "";
+        hqCell.innerHTML = preserved + hqHtml;
+        _dbg("[XRM] 기존 리뷰 보존 + AI 리뷰 교체");
+      } else if (existingHtml.replace(/<[^>]*>/g, "").trim().length > 10) {
+        hqCell.innerHTML = existingHtml + hqHtml;
+        _dbg("[XRM] 기존 리뷰 보존 + AI 리뷰 추가");
+      } else {
+        hqCell.innerHTML = hqHtml;
+      }
       const wrapper = doc.querySelector(".ck-content") || doc.body.firstElementChild;
       attr.setValue(wrapper ? wrapper.outerHTML : doc.body.innerHTML);
       attr.setSubmitMode("always");
