@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.17.2";
+  const VERSION = "4.18.0";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -1817,7 +1817,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     if (!isLoading) {
       const btnRow = document.createElement("div"); btnRow.style.cssText = "margin-top:20px;text-align:right;display:flex;gap:8px;justify-content:flex-end;";
       if (typeof onSave === "function") {
-        const saveBtn = document.createElement("button"); saveBtn.textContent = "저장";
+        const saveBtn = document.createElement("button"); saveBtn.textContent = "입력";
         saveBtn.style.cssText = "padding:8px 24px;background:#61A229;color:white;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;";
         saveBtn.addEventListener("click", () => { onSave(); removeModal(); });
         btnRow.appendChild(saveBtn);
@@ -2032,7 +2032,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
         }
       }
 
-      const doSave = () => {
+      const doWrite = () => {
         const xrmResult = writeToXrm(finalHtml);
         if (xrmResult !== "ok") {
           _dbg(`[XRM] Xrm.Page 결과: ${xrmResult}, DOM fallback 시도`);
@@ -2055,13 +2055,10 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
             }
           }
         }
-        if (xrmResult === "ok") {
-          try { Xrm.Page.data.entity.save(); } catch (e) { _dbg(`[XRM] save 에러: ${e.message}`); }
-        }
-        _dbg("[XRM] 사용자가 저장 버튼 클릭 — CRM 저장 완료");
+        _dbg("[XRM] HQ 셀에 리뷰 입력 완료 (저장하지 않음)");
       };
 
-      showModal(`리뷰 완료 (v${VERSION})`, finalHtml, false, false, doSave, true);
+      showModal(`리뷰 완료 (v${VERSION})`, finalHtml, false, false, doWrite, true);
     } catch (err) {
       removeModal();
       alert("리뷰 생성 중 오류: " + err.message);
