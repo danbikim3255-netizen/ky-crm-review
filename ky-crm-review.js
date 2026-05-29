@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.18.0";
+  const VERSION = "4.19.0";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -751,16 +751,21 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       } catch { /* skip */ }
     }
 
-    const zipFiles = fileList.filter((f) => f.name && /\.zip$/i.test(f.name) && (f.url || f._buffer) && (!f.size || Number(f.size) < MAX_SP_FILE_SIZE));
+    const zipFiles = fileList.filter((f) => f.name && /\.zip$/i.test(f.name) && (f.url || f._buffer));
     const zipImages = [];
     for (const zf of zipFiles) {
       try {
         let zipResult = null;
         const fileSize = zf.size ? Number(zf.size) : (zf._buffer ? zf._buffer.byteLength : 0);
-        if (zf._buffer) {
+        const isLargeZip = fileSize > MAX_SP_FILE_SIZE;
+        if (isLargeZip && zf.url) {
+          _dbg(`[SP ZIP] ${zf.name}: 대용량 (${Math.round(fileSize / 1024 / 1024)}MB) — Range 기반 추출 우선`);
+          zipResult = await extractTextFilesFromZip(zf.url, fileSize);
+        }
+        if (!zipResult && zf._buffer) {
           _dbg(`[SP ZIP] ${zf.name}: 직접 다운로드 버퍼 사용 (${Math.round(zf._buffer.byteLength / 1024)}KB)`);
           zipResult = await extractTextFromZipBuffer(zf._buffer);
-        } else if (zf.url) {
+        } else if (!zipResult && zf.url) {
           if (fileSize === 0 || fileSize < MAX_SP_FILE_SIZE) {
             try {
               const zipResp = await fetch(zf.url, { credentials: "include", signal: AbortSignal.timeout(SP_FETCH_TIMEOUT) });
@@ -770,7 +775,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
           if (!zipResult && await checkProxy()) {
             try {
               _dbg(`[SP ZIP] ${zf.name}: 프록시 경유 다운로드 시도`);
-              const zipResp = await fetchViaProxy(zf.url, { signal: AbortSignal.timeout(120000) });
+              const zipResp = await fetchViaProxy(zf.url, { signal: AbortSignal.timeout(isLargeZip ? 300000 : 120000) });
               if (zipResp.ok) zipResult = await extractTextFromZipBuffer(await zipResp.arrayBuffer());
             } catch (e) { _dbg(`[SP ZIP] ${zf.name}: 프록시 다운로드 실패 — ${e.message}`); }
           }
@@ -896,6 +901,37 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
 
   async function fetchSharePointFolder(link) {
     _dbg(`[SP] fetchSharePointFolder: ${link.url.substring(0, 80)}...`);
+
+    if (await checkProxy() && /\.zip$/i.test(link.text || "")) {
+      try {
+        _dbg(`[SP] ZIP 파일 감지 — 프록시 /sp-zip 서버사이드 추출 시도`);
+        try { updateLoadingMessage("프록시에서 ZIP 다운로드+로그 추출 중... (대용량 파일은 1~2분 소요)"); } catch {}
+        const spZipResp = await fetch(`${CORS_PROXY_URL}/sp-zip?shareUrl=${encodeURIComponent(link.url)}`, { signal: AbortSignal.timeout(600000) });
+        if (spZipResp.ok) {
+          const data = await spZipResp.json();
+          _dbg(`[SP] /sp-zip 성공: ${data.name} — ${data.files.length}개 텍스트, ${(data.nestedZips || []).length}개 중첩ZIP`);
+          let content = "";
+          const allE = data.allEntries || [];
+          const tN = allE.filter(e => /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt)$/i.test(e.name) && !e.name.endsWith("/"));
+          let zipSum = `ZIP "${data.name}" (총 ${allE.length}개 파일)`;
+          if (tN.length > 0) { zipSum += `\n  텍스트/로그 (${tN.length}개):`; for (const e of tN.slice(0, 30)) zipSum += `\n    - ${e.name} (${Math.round(e.uncompSize / 1024)}KB)`; }
+          content += zipSum;
+          for (const f of data.files) content += `\n\n--- ZIP 내부 텍스트: ${data.name} > ${f.name} ---\n${f.text}\n--- 끝 ---`;
+          for (const nz of (data.nestedZips || [])) {
+            const nAllE = nz.allEntries || [];
+            const nTN = nAllE.filter(e => /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt)$/i.test(e.name) && !e.name.endsWith("/"));
+            let nSum = `\n\n중첩 ZIP "${nz.name}" (총 ${nAllE.length}개 파일)`;
+            if (nTN.length > 0) { nSum += `\n  텍스트/로그 (${nTN.length}개):`; for (const e of nTN.slice(0, 30)) nSum += `\n    - ${e.name} (${Math.round(e.uncompSize / 1024)}KB)`; }
+            content += nSum;
+            for (const f of nz.files) content += `\n\n--- ZIP 내부 텍스트: ${nz.name} > ${f.name} ---\n${f.text}\n--- 끝 ---`;
+          }
+          const zipImages = [];
+          for (const img of (data.images || [])) zipImages.push({ ...img, zipName: data.name });
+          for (const nz of (data.nestedZips || [])) { for (const img of (nz.images || [])) zipImages.push({ ...img, zipName: nz.name }); }
+          return { ...link, content, error: null, zipImages };
+        } else { _dbg(`[SP] /sp-zip 실패: HTTP ${spZipResp.status}`); }
+      } catch (err) { _dbg(`[SP] /sp-zip 예외: ${err.message}`); }
+    }
 
     if (await checkProxy()) {
       try {

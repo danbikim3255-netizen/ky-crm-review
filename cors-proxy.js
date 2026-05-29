@@ -98,8 +98,8 @@ function extractTextFromZipFile(filePath) {
   const TEXT_EXTS = /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt|yaml|yml|properties|md)$/i;
   const IMG_EXTS = /\.(png|jpg|jpeg|bmp|gif|tiff|tif)$/i;
   const MAX_TEXT_FILES = 500;
-  const MAX_FILE_SIZE = 5 * 1024 * 1024;
-  const MAX_TOTAL_TEXT = 2000000;
+  const MAX_FILE_SIZE = 200 * 1024 * 1024;
+  const MAX_TOTAL_TEXT = 5000000;
 
   const buf = fs.readFileSync(filePath);
   const entries = [];
@@ -166,6 +166,13 @@ function extractTextFromZipFile(filePath) {
 
   const allEntries = entries.map(e => ({ name: e.name, uncompSize: e.uncompSize }));
   const textEntries = entries.filter(e => TEXT_EXTS.test(e.name) && !e.name.endsWith("/") && e.uncompSize <= MAX_FILE_SIZE);
+  const PRIORITY_RE = /error|err\.|\.err$|slow|migration|license|change|interface|\.db\.|stream/i;
+  const LOW_PRIORITY_RE = /access\.log|nginx\.access/i;
+  textEntries.sort((a, b) => {
+    const ap = PRIORITY_RE.test(a.name) ? 0 : LOW_PRIORITY_RE.test(a.name) ? 2 : 1;
+    const bp = PRIORITY_RE.test(b.name) ? 0 : LOW_PRIORITY_RE.test(b.name) ? 2 : 1;
+    return ap - bp;
+  });
   const imgEntries = entries.filter(e => IMG_EXTS.test(e.name) && !e.name.endsWith("/"));
 
   const files = [];
@@ -185,7 +192,9 @@ function extractTextFromZipFile(filePath) {
       if (e.method === 0) content = raw;
       else if (e.method === 8) content = zlib.inflateRawSync(raw);
       else continue;
+      const MAX_PER_FILE = 500000;
       let text = content.toString("utf8");
+      if (text.length > MAX_PER_FILE) text = "... (앞부분 생략 — 마지막 500KB만 포함)\n" + text.substring(text.length - MAX_PER_FILE);
       if (text.length + totalText > MAX_TOTAL_TEXT) text = text.substring(0, MAX_TOTAL_TEXT - totalText) + "\n... (잘림)";
       files.push({ name: e.name, size: e.uncompSize, text });
       totalText += text.length;
@@ -371,9 +380,13 @@ async function getValidToken() {
 }
 
 async function graphGet(urlPath, token) {
+  return graphGetWithHeaders(urlPath, token, {});
+}
+
+async function graphGetWithHeaders(urlPath, token, extraHeaders) {
   const url = urlPath.startsWith("http") ? urlPath : `https://graph.microsoft.com/v1.0${urlPath}`;
   const resp = await makeRequest(url, {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json", ...extraHeaders },
     timeout: 30000,
   });
   if (resp.status !== 200) {
@@ -383,10 +396,24 @@ async function graphGet(urlPath, token) {
   return JSON.parse(resp.body.toString());
 }
 
+async function getSharePointToken(hostname) {
+  if (!tokenData || !tokenData.refreshToken) return null;
+  try {
+    const result = await msPost(MS_TOKEN_URL, {
+      client_id: MS_CLIENT_ID, grant_type: "refresh_token",
+      refresh_token: tokenData.refreshToken,
+      scope: `https://${hostname}/.default offline_access`,
+    });
+    if (result.access_token) return result.access_token;
+  } catch {}
+  return null;
+}
+
 async function graphGetShareInfo(shareUrl, token) {
   const encoded = "u!" + Buffer.from(shareUrl).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const basePath = `/shares/${encoded}/driveItem`;
-  const item = await graphGet(basePath, token);
+  // redeemSharingLink 헤더로 아직 redeem 안 된 공유 링크도 접근 가능
+  const item = await graphGetWithHeaders(basePath, token, { "Prefer": "redeemSharingLink" });
 
   if (item.folder) {
     const files = await graphListChildren(basePath, token, "", 0);
@@ -529,6 +556,83 @@ const server = http.createServer(async (req, res) => {
     return jsonResp(res, 200, { ok: true });
   }
 
+  if (pathname === "/sp-zip") {
+    const shareUrl = reqUrl.searchParams.get("shareUrl");
+    if (!shareUrl) return jsonResp(res, 400, { error: "Missing shareUrl" });
+    const short = shareUrl.length > 60 ? shareUrl.substring(0, 60) + "..." : shareUrl;
+    process.stdout.write(`  [SP-ZIP] ${short}`);
+    const token = await getValidToken();
+    if (!token) { console.log(" -> 인증 필요"); return jsonResp(res, 401, { error: "Not authenticated" }); }
+    try {
+      const info = await graphGetShareInfo(shareUrl, token);
+      if (info.type === "folder") { console.log(" -> 폴더 (ZIP 아님)"); return jsonResp(res, 400, { error: "Not a file" }); }
+      if (!info.downloadUrl) { console.log(" -> downloadUrl 없음"); return jsonResp(res, 502, { error: "No download URL" }); }
+      const sizeMB = ((info.size || 0) / 1024 / 1024).toFixed(1);
+      console.log(` -> ${info.name} (${sizeMB}MB) 다운로드 중...`);
+      const tmpDir = path.join(require("os").tmpdir(), "sp-zip-" + Date.now());
+      fs.mkdirSync(tmpDir, { recursive: true });
+      const tmpFile = path.join(tmpDir, info.name || "download.zip");
+      try {
+        const dlResp = await makeRequest(info.downloadUrl, { timeout: 600000 });
+        fs.writeFileSync(tmpFile, dlResp.body);
+        console.log(`  [SP-ZIP] 다운로드 완료: ${Math.round(dlResp.body.length / 1024 / 1024)}MB`);
+        const result = extractTextFromZipFile(tmpFile);
+        const nestedZipEntries = result.allEntries.filter(e => /\.zip$/i.test(e.name) && e.uncompSize > 0);
+        const nestedResults = [];
+        for (const nz of nestedZipEntries.slice(0, 3)) {
+          try {
+            const zipBuf = fs.readFileSync(tmpFile);
+            const entries = [];
+            let eocdOff = -1;
+            for (let i = zipBuf.length - 22; i >= Math.max(0, zipBuf.length - 65558); i--) { if (zipBuf.readUInt32LE(i) === 0x06054b50) { eocdOff = i; break; } }
+            if (eocdOff < 0) continue;
+            let cdOff2 = zipBuf.readUInt32LE(eocdOff + 16), cdCount2 = zipBuf.readUInt16LE(eocdOff + 10);
+            if (cdOff2 === 0xFFFFFFFF) {
+              for (let i = eocdOff - 20; i >= Math.max(0, eocdOff - 40); i--) {
+                if (zipBuf.readUInt32LE(i) === 0x07064b50) { const z64off = Number(zipBuf.readBigUInt64LE(i + 8)); cdCount2 = Number(zipBuf.readBigUInt64LE(z64off + 32)); cdOff2 = Number(zipBuf.readBigUInt64LE(z64off + 48)); break; }
+              }
+            }
+            let off2 = cdOff2;
+            for (let i = 0; i < cdCount2 && off2 + 46 <= zipBuf.length; i++) {
+              if (zipBuf.readUInt32LE(off2) !== 0x02014b50) break;
+              const m = zipBuf.readUInt16LE(off2 + 10);
+              let cs = zipBuf.readUInt32LE(off2 + 20), us = zipBuf.readUInt32LE(off2 + 24), lo = zipBuf.readUInt32LE(off2 + 42);
+              const nl = zipBuf.readUInt16LE(off2 + 28), el = zipBuf.readUInt16LE(off2 + 30), cl = zipBuf.readUInt16LE(off2 + 32);
+              const nm = zipBuf.toString("utf8", off2 + 46, off2 + 46 + nl);
+              if (cs === 0xFFFFFFFF || us === 0xFFFFFFFF || lo === 0xFFFFFFFF) { let eO = off2+46+nl; const eE = eO+el; while(eO+4<=eE){const t=zipBuf.readUInt16LE(eO),s=zipBuf.readUInt16LE(eO+2);if(t===1){let p=eO+4;if(us===0xFFFFFFFF&&p+8<=eO+4+s){us=Number(zipBuf.readBigUInt64LE(p));p+=8;}if(cs===0xFFFFFFFF&&p+8<=eO+4+s){cs=Number(zipBuf.readBigUInt64LE(p));p+=8;}if(lo===0xFFFFFFFF&&p+8<=eO+4+s){lo=Number(zipBuf.readBigUInt64LE(p));}break;}eO+=4+s;} }
+              entries.push({ name: nm, method: m, compSize: cs, uncompSize: us, localOff: lo });
+              off2 += 46 + nl + el + cl;
+            }
+            const nzEntry = entries.find(e => e.name.endsWith(nz.name) || nz.name.endsWith(e.name));
+            if (!nzEntry) continue;
+            const lh = nzEntry.localOff;
+            if (lh + 30 > zipBuf.length || zipBuf.readUInt32LE(lh) !== 0x04034b50) continue;
+            const lnl = zipBuf.readUInt16LE(lh + 26), lel = zipBuf.readUInt16LE(lh + 28);
+            const ds = lh + 30 + lnl + lel, de = ds + nzEntry.compSize;
+            if (de > zipBuf.length) continue;
+            const raw = zipBuf.slice(ds, de);
+            let nestedBuf;
+            if (nzEntry.method === 0) nestedBuf = raw;
+            else if (nzEntry.method === 8) nestedBuf = zlib.inflateRawSync(raw);
+            else continue;
+            const nestedFile = path.join(tmpDir, nz.name.split("/").pop());
+            fs.writeFileSync(nestedFile, nestedBuf);
+            console.log(`  [SP-ZIP] 중첩 ZIP 추출: ${nz.name} (${Math.round(nestedBuf.length / 1024 / 1024)}MB)`);
+            const nestedResult = extractTextFromZipFile(nestedFile);
+            nestedResults.push({ name: nz.name, files: nestedResult.files, images: nestedResult.images, allEntries: nestedResult.allEntries });
+            try { fs.unlinkSync(nestedFile); } catch {}
+          } catch (e) { console.log(`  [SP-ZIP] 중첩 ZIP 처리 실패: ${nz.name} — ${e.message}`); }
+        }
+        try { fs.unlinkSync(tmpFile); fs.rmdirSync(tmpDir); } catch {}
+        console.log(`  [SP-ZIP] 완료: ${result.files.length}개 텍스트, ${nestedResults.length}개 중첩ZIP`);
+        return jsonResp(res, 200, { name: info.name, size: info.size, files: result.files, images: result.images, allEntries: result.allEntries, nestedZips: nestedResults });
+      } catch (e) {
+        try { fs.unlinkSync(tmpFile); fs.rmdirSync(tmpDir); } catch {}
+        throw e;
+      }
+    } catch (e) { console.log(` -> 실패: ${e.message.substring(0, 100)}`); return jsonResp(res, 502, { error: e.message }); }
+  }
+
   if (pathname === "/graph-info") {
     const shareUrl = reqUrl.searchParams.get("shareUrl");
     if (!shareUrl) return jsonResp(res, 400, { error: "Missing shareUrl" });
@@ -574,7 +678,42 @@ const server = http.createServer(async (req, res) => {
       const accept = reqUrl.searchParams.get("accept");
       if (accept) reqHeaders["Accept"] = accept;
 
-      const resp = await makeRequest(targetUrl, { headers: reqHeaders, timeout: 120000 });
+      // SharePoint URL이면 SharePoint REST API v2.0 shares 엔드포인트로 접근
+      let targetUrlFinal = targetUrl;
+      try {
+        const parsedUrl = new URL(targetUrl);
+        if (parsedUrl.hostname.includes("sharepoint.com") && !reqHeaders["Authorization"]) {
+          const spToken = await getSharePointToken(parsedUrl.hostname);
+          if (spToken) {
+            // SharePoint REST API v2.0 shares endpoint로 변환
+            const shareEncoded = "u!" + Buffer.from(targetUrl).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+            const spApiUrl = `https://${parsedUrl.hostname}/_api/v2.0/shares/${shareEncoded}/driveItem`;
+            console.log(`  [FETCH] SharePoint REST API 시도: ${parsedUrl.hostname}`);
+            try {
+              const spResp = await makeRequest(spApiUrl, {
+                headers: { Authorization: `Bearer ${spToken}`, Accept: "application/json" },
+                timeout: 30000,
+              });
+              if (spResp.status === 200) {
+                const spData = JSON.parse(spResp.body.toString());
+                const dlUrl = spData["@content.downloadUrl"] || spData["@microsoft.graph.downloadUrl"];
+                if (dlUrl) {
+                  console.log(` -> 다운로드 URL 획득: ${spData.name}`);
+                  targetUrlFinal = dlUrl;
+                  // downloadUrl은 인증 없이 직접 접근 가능
+                  delete reqHeaders["Authorization"];
+                }
+              } else {
+                console.log(` -> SP REST API ${spResp.status}`);
+              }
+            } catch (spErr) {
+              console.log(` -> SP REST API 예외: ${spErr.message}`);
+            }
+          }
+        }
+      } catch {}
+
+      const resp = await makeRequest(targetUrlFinal, { headers: reqHeaders, timeout: 120000 });
       const ct = resp.headers["content-type"];
       if (ct) res.setHeader("Content-Type", ct);
       res.setHeader("Content-Length", resp.body.length);
@@ -586,6 +725,16 @@ const server = http.createServer(async (req, res) => {
       console.log(` -> FAIL: ${e.message}`);
       jsonResp(res, 502, { error: e.message });
     }
+    return;
+  }
+
+  if (pathname === "/ky-crm-review.js") {
+    const jsPath = path.join(__dirname, "ky-crm-review.js");
+    try {
+      const js = fs.readFileSync(jsPath, "utf8");
+      res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache" });
+      res.end(js);
+    } catch (e) { res.writeHead(404); res.end("Not found"); }
     return;
   }
 
