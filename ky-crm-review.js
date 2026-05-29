@@ -1,4 +1,4 @@
-// KY CRM Case Review Bookmarklet v4.16.0
+// KY CRM Case Review Bookmarklet v4.17.0
 // Chrome Extension(v3.1) → Bookmarklet 전환
 // Main World에서 실행: Xrm.Page 직접 접근, 페이지 인증 토큰 공유, SW 의존성 제거
 (function () {
@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.16.0";
+  const VERSION = "4.17.0";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -995,7 +995,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
 
     _dbg("[SP] 모든 방법 실패");
     const msg = proxyOk ? "프록시 경유 다운로드 실패" : "CORS 차단 — 로컬 프록시(localhost:18765) 미실행";
-    return { ...link, content: `SharePoint 파일 "${link.text}" — ${msg}. 수동 확인 필요\nURL: ${link.url}`, error: null };
+    return { ...link, content: null, error: msg };
   }
 
   function parseSharePointFolderHtml(html, folderUrl) {
@@ -1138,7 +1138,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     const resp = await fetch(downloadUrl);
     if (!resp.ok) return { type: "nas", text: link.text, content: null, error: `HTTP ${resp.status}` };
     const contentLength = parseInt(resp.headers.get("content-length") || "0");
-    if (contentLength > NAS_ZIP_MAX_FULL_DOWNLOAD) return { type: "nas", text: link.text, content: `NAS ZIP "${filename}" (${Math.round(contentLength / 1024 / 1024)}MB — 너무 커서 자동 분석 불가)`, error: null };
+    if (contentLength > NAS_ZIP_MAX_FULL_DOWNLOAD) return { type: "nas", text: link.text, content: null, error: `NAS ZIP ${Math.round(contentLength / 1024 / 1024)}MB — 너무 큼` };
     const buffer = await resp.arrayBuffer();
     const zipResult = await extractTextFromZipBuffer(buffer);
     if (!zipResult) return { type: "nas", text: link.text, content: null, error: "ZIP 파싱 실패" };
@@ -1203,7 +1203,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
         _dbg(`[WT] 완료: ${(data.files || []).length}개 텍스트, ${zipImages.length}개 이미지`);
         return { type: "external", text: link.text, content: content.length > MAX_TOTAL_LINKED_CHARS ? content.substring(0, MAX_TOTAL_LINKED_CHARS) + "\n... (잘림)" : content, error: null, zipImages };
       }
-      if (isWeTransfer) return { type: "external", text: link.text, content: `WeTransfer 링크: ${link.url}\n(CORS 프록시 미실행 — 수동 확인 필요)`, error: "프록시 필요" };
+      if (isWeTransfer) return { type: "external", text: link.text, content: null, error: "CORS 프록시 미실행" };
 
       const isDropbox = /dropbox\.com\//i.test(link.url) || /dropboxusercontent\.com\//i.test(link.url);
       if (isDropbox && await checkProxy()) {
@@ -1214,7 +1214,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
           let errMsg = errText;
           try { const j = JSON.parse(errText); errMsg = j.error || errText; } catch {}
           _dbg(`[DB] 실패 (${resp.status}): ${errMsg}`);
-          return { type: "external", text: link.text, content: `Dropbox "${link.text}": ${errMsg}`, error: errMsg };
+          return { type: "external", text: link.text, content: null, error: errMsg };
         }
         const data = await resp.json();
         if (data.type === "text") {
@@ -1243,7 +1243,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
         _dbg(`[DB] 완료: ${(data.files || []).length}개 텍스트, ${zipImages.length}개 이미지`);
         return { type: "external", text: link.text, content: content.length > MAX_TOTAL_LINKED_CHARS ? content.substring(0, MAX_TOTAL_LINKED_CHARS) + "\n... (잘림)" : content, error: null, zipImages };
       }
-      if (isDropbox) return { type: "external", text: link.text, content: `Dropbox 링크: ${link.url}\n(CORS 프록시 미실행 — 수동 확인 필요)`, error: "프록시 필요" };
+      if (isDropbox) return { type: "external", text: link.text, content: null, error: "CORS 프록시 미실행" };
 
       const urls = [link.url];
       if (link.url.includes("/sharing/") && !link.url.includes("kohyoung.co:5001")) {
@@ -1254,7 +1254,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       for (const url of urls) {
         try { const resp = await fetch(url, { redirect: "follow" }); if (resp.ok) { response = resp; break; } } catch { /* next */ }
       }
-      if (!response) return { type: "external", text: link.text, content: `외부 링크: ${link.url}\n(접근 불가 — 수동 확인 필요)`, error: "접근 불가" };
+      if (!response) return { type: "external", text: link.text, content: null, error: "접근 불가" };
       const contentType = response.headers.get("content-type") || "";
       const contentDisposition = response.headers.get("content-disposition") || "";
       const isZip = contentType.includes("application/zip") || contentType.includes("application/x-zip") || contentDisposition.toLowerCase().includes(".zip") || (contentType.includes("octet-stream") && link.url.includes(".zip"));
@@ -1282,7 +1282,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
         if (text.length > MAX_PDF_TEXT_CHARS) text = text.substring(0, MAX_PDF_TEXT_CHARS) + `\n... (일부만 포함)`;
         return { type: "external", text: link.text, content: text, error: null };
       }
-      if (isHtml) return { type: "external", text: link.text, content: `외부 파일 공유 링크: ${link.url}\n(HTML 페이지 — 수동 확인 필요)`, error: null };
+      if (isHtml) return { type: "external", text: link.text, content: null, error: "HTML 페이지 — 파일 아님" };
       return { type: "external", text: link.text, content: `외부 링크: ${link.url}\n(Content-Type: ${contentType})`, error: null };
     } catch (err) {
       return { type: "external", text: link.text, content: `외부 링크: ${link.url}\n(접근 실패: ${err.message})`, error: err.message };
