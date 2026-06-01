@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.22.0";
+  const VERSION = "4.23.0";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -1817,6 +1817,9 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       const isSection = sectionKeywords.some((kw) => trimmed.startsWith(kw));
       if (isSection && trimmed.length < 30) return `<p style="margin: 0;">&nbsp;</p><p style="margin: 0;"><b><span style="color:#2E7D32;">${trimmed}</span></b></p>`;
       if (trimmed === "") return "";
+      if (trimmed.startsWith("→")) return `<p style="margin: 0;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>${linkifyUrls(trimmed)}</b></p>`;
+      const arrowIdx = trimmed.indexOf("→");
+      if (arrowIdx > 0) { const before = trimmed.substring(0, arrowIdx).trim(), after = trimmed.substring(arrowIdx).trim(); return `<p style="margin: 0;">&nbsp;&nbsp;&nbsp;&nbsp;${linkifyUrls(before)}</p><p style="margin: 0;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>${linkifyUrls(after)}</b></p>`; }
       return `<p style="margin: 0;">&nbsp;&nbsp;&nbsp;&nbsp;${linkifyUrls(line)}</p>`;
     }).join("");
   }
