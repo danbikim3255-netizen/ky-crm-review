@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.19.0";
+  const VERSION = "4.20.0";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -796,21 +796,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
       } catch (e) { _dbg(`[SP ZIP] ${zf.name}: 처리 실패 — ${e.message}`); }
     }
 
-    const videoFiles = fileList.filter((f) => f.name && VIDEO_EXTENSIONS.test(f.name) && f.url && (!f.size || Number(f.size) < MAX_VIDEO_SIZE));
-    for (const vf of videoFiles) {
-      try {
-        _dbg(`[VIDEO] SharePoint 동영상 프레임 추출: ${vf.name}`);
-        const frames = await extractVideoFrames(vf.url);
-        if (frames && frames.frames.length > 0) {
-          textContents += `\n\n--- 동영상: ${vf.name} (${Math.round(frames.duration)}초, ${frames.width}x${frames.height}) ---\n${frames.frames.length}개 프레임 캡처 (${VIDEO_FRAME_INTERVAL_SEC}초 간격)\n--- 끝 ---`;
-          for (const f of frames.frames) {
-            if (zipImages.length < MAX_ZIP_IMAGES) {
-              zipImages.push({ name: `${vf.name}_${Math.round(f.time)}s.jpg`, base64: f.base64, mediaType: "image/jpeg", zipName: vf.name });
-            }
-          }
-        }
-      } catch (e) { _dbg(`[VIDEO] ${vf.name}: 프레임 추출 실패 — ${e.message}`); }
-    }
+    const videoFiles = [];
 
     const imageFiles = fileList.filter((f) => f.name && getImageMediaType(f.name) && f.url && (!f.size || Number(f.size) < MAX_ZIP_IMAGE_SIZE)).slice(0, MAX_ZIP_IMAGES - zipImages.length);
     for (const imgFile of imageFiles) {
