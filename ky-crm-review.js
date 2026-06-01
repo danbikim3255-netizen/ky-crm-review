@@ -9,7 +9,7 @@
   const API_URL = "https://llm.kohyoung.com/v1/messages";
   const MODEL = "claude-sonnet-4-6";
   const DEFAULT_API_KEY = "sk-Sb8xGfx5rcNDwMXqH8I_ow";
-  const VERSION = "4.20.0";
+  const VERSION = "4.21.0";
   const CORS_PROXY_URL = "http://localhost:18765";
 
   const MAX_PDF_TEXT_CHARS = 200000;
@@ -731,7 +731,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
   async function processSharePointFileList(link, fileList) {
     const summary = fileList.map((f) => `- ${f.name} (${f.size ? Math.round(Number(f.size) / 1024 / 1024) + "MB" : "크기 불명"})`).join("\n");
     const TEXT_FILE_RE = /\.(log|txt|csv|ini|cfg|conf|xml|json|dat|rsl|rpt|out|err|yaml|yml|properties|md|htm|html|bat|sh|ps1|py|js|ts|env|toml|reg|inf|sql|sln|csproj|config|manifest|rule|drl|dmp)$/i;
-    const SKIP_EXT_RE = /\.(pat|exe|msi|iso|bin|dll|sys|cab|wim|vhd|vhdx|bak|img|tar|gz|7z|rar)$/i;
+    const SKIP_EXT_RE = /\.(pat|exe|msi|iso|bin|dll|sys|cab|wim|vhd|vhdx|bak|img|tar|gz|7z|rar|mp4|avi|mov|mkv|webm|wmv)$/i;
     const MAX_SP_FILE_SIZE = 100 * 1024 * 1024;
     const SP_FETCH_TIMEOUT = 60000;
     const textFiles = fileList.filter((f) => f.name && TEXT_FILE_RE.test(f.name) && f.url && (!f.size || Number(f.size) < MAX_SP_FILE_SIZE));
@@ -1547,7 +1547,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     if (linkedContent.length > 0) {
       _dbg(`[프롬프트] linkedContent 전체: ${linkedContent.length}개`);
       for (const item of linkedContent) _dbg(`  → [${item.type}] "${item.text}" content=${item.content ? item.content.length + 'chars' : 'null'} error=${item.error || 'none'}`);
-      const SKIP_EXTS = /\.(pat|exe|msi|dll|sys|bin|cab|iso)$/i;
+      const SKIP_EXTS = /\.(pat|exe|msi|dll|sys|bin|cab|iso|mp4|avi|mov|mkv|webm|wmv)$/i;
       const validItems = linkedContent.filter(item => {
         if (item.error && !item.content) return false;
         if (!item.content) return false;
@@ -1734,7 +1734,7 @@ Branch Office에서 시도한 조치 사항을 정리합니다. (원문에 있�
     }
 
     if (!result.ok) throw new Error(`API 오류 (${result.status}): ${result.body}`);
-    const SKIP_EXTS2 = /\.(pat|exe|msi|dll|sys|bin|cab|iso)$/i;
+    const SKIP_EXTS2 = /\.(pat|exe|msi|dll|sys|bin|cab|iso|mp4|avi|mov|mkv|webm|wmv)$/i;
     const _sourceNames = linkedContent.filter(it => it.content && !SKIP_EXTS2.test(it.text)).map(it => {
       let n = it.text; if (it.type === "external" && /^https?:\/\//.test(n)) { try { const fn = decodeURIComponent(new URL(n).pathname).split("/").filter(Boolean).pop(); if (fn) n = fn.replace(/\?.*$/, ""); } catch {} } return n;
     });
